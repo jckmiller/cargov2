@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>A3 Shipping Pro — 3D Container Loading</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <!-- Login overlay -->
+    <div id="login-overlay" class="overlay">
+      <form id="login-form" class="login-card">
+        <h1>A3 Shipping Pro</h1>
+        <p class="muted">3D Container Loading Tool</p>
+        <label>Username<input id="login-username" autocomplete="username" value="admin" /></label>
+        <label>Password<input id="login-password" type="password" autocomplete="current-password" value="123123" /></label>
+        <button type="submit" class="btn primary">Sign in</button>
+        <p id="login-error" class="error"></p>
+        <p class="muted small">Default admin: <code>admin</code> / <code>123123</code></p>
+      </form>
+    </div>
+
+    <!-- App shell -->
+    <div id="app" class="hidden">
+      <header class="topbar">
+        <div class="brand"><img class="brand-logo" src="/assets/logo.png" alt="Company logo" /><span>A3 Shipping Pro</span></div>
+        <div class="topbar-project">
+          <span id="active-project-name" class="muted">No project</span>
+        </div>
+        <div class="topbar-actions">
+          <button id="btn-projects" class="btn">Projects</button>
+          <button id="btn-save" class="btn" title="Save project to cloud">Save</button>
+          <button id="btn-compare" class="btn">Compare</button>
+          <button id="btn-theme" class="btn icon" title="Toggle theme">🌗</button>
+          <button id="btn-admin" class="btn hidden">Users</button>
+          <span id="user-badge" class="badge"></span>
+          <button id="btn-logout" class="btn">Logout</button>
+        </div>
+      </header>
+
+      <div class="layout">
+        <!-- Left: catalog + scenarios -->
+        <aside class="sidebar left" id="sidebar-left">
+          <section class="panel" data-panel="scenarios">
+            <div class="panel-head">
+              <button class="collapse-toggle" aria-expanded="true" title="Collapse">
+                <span class="chevron">▾</span><h3>Scenarios</h3>
+              </button>
+              <button id="btn-add-scenario" class="btn small">+ New</button>
+            </div>
+            <div class="panel-body">
+              <div id="scenario-list" class="list"></div>
+              <button id="btn-autoload" class="btn primary full">🧠 Auto-Generate Load Plan</button>
+            </div>
+          </section>
+
+          <section class="panel" data-panel="catalog">
+            <div class="panel-head">
+              <button class="collapse-toggle" aria-expanded="true" title="Collapse">
+                <span class="chevron">▾</span><h3>Item Catalog</h3>
+              </button>
+              <button id="btn-import-catalog" class="btn small" title="Import catalog from CSV">Import CSV</button>
+              <button id="btn-add-catalog" class="btn small">+ Item</button>
+            </div>
+            <div class="panel-body">
+              <div id="catalog-list" class="list"></div>
+            </div>
+          </section>
+
+          <section class="panel" data-panel="library">
+            <div class="panel-head">
+              <button class="collapse-toggle" aria-expanded="true" title="Collapse">
+                <span class="chevron">▾</span><h3>Item Library</h3>
+              </button>
+            </div>
+            <div class="panel-body">
+              <div id="library-list" class="list"></div>
+            </div>
+          </section>
+        </aside>
+
+        <!-- Center: 3D scene -->
+        <main class="scene-wrap">
+          <button id="toggle-left" class="sidebar-handle left" title="Toggle left panel">‹</button>
+          <button id="toggle-right" class="sidebar-handle right" title="Toggle right panel">›</button>
+          <div class="scene-toolbar">
+            <label class="inline">
+              Container
+              <select id="container-select"></select>
+            </label>
+            <button id="btn-toggle-labels" class="btn small">Labels (L)</button>
+            <button id="btn-rotate" class="btn small" title="Rotate 90° (R)">Rotate</button>
+            <button id="btn-tip" class="btn small" title="Tip forward (T)">Tip</button>
+            <button id="btn-delete" class="btn small danger" title="Delete (Del)">Delete</button>
+            <span class="spacer"></span>
+            <button id="btn-loadplan" class="btn small">Load Plan</button>
+            <button id="btn-manifest" class="btn small">Manifest</button>
+            <button id="btn-export-png" class="btn small">PNG</button>
+            <button id="btn-export-json" class="btn small">Export</button>
+            <button id="btn-import-json" class="btn small">Import</button>
+          </div>
+          <div id="canvas-container"></div>
+          <div id="hint" class="hint">
+            Click select · Drag move (drops to floor) · Shift+Drag stack on item · R rotate · T tip ·
+            E edit · L labels · Dbl-Click details · Del remove · Right-Drag camera · Scroll zoom
+          </div>
+        </main>
+
+        <!-- Right: stats + staging -->
+        <aside class="sidebar right" id="sidebar-right">
+          <section class="panel" data-panel="stats">
+            <div class="panel-head">
+              <button class="collapse-toggle" aria-expanded="true" title="Collapse">
+                <span class="chevron">▾</span><h3>Statistics</h3>
+              </button>
+            </div>
+            <div class="panel-body">
+              <div id="stats-panel" class="stats"></div>
+            </div>
+          </section>
+          <section class="panel" data-panel="staging">
+            <div class="panel-head">
+              <button class="collapse-toggle" aria-expanded="true" title="Collapse">
+                <span class="chevron">▾</span><h3>Staging Area</h3>
+              </button>
+            </div>
+            <div class="panel-body">
+              <div id="staging-list" class="list"></div>
+            </div>
+          </section>
+        </aside>
+      </div>
+    </div>
+
+    <!-- Modal host -->
+    <div id="modal-host"></div>
+    <div id="toast-host"></div>
+
+    <script type="module" src="/js/main.js"></script>
+  </body>
+</html>
