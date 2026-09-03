@@ -560,6 +560,7 @@ function wireTopbar() {
   document.getElementById('btn-projects').addEventListener('click', () => {
     projectsDialog({
       canWrite: state.user.role !== 'viewer',
+      canManage: state.user.role === 'admin',
       onOpen: (id) => loadProject(id),
       onNew: () => newProjectDialog(async ({ name, visibility }) => {
         const proj = newProject(name); proj.visibility = visibility;
@@ -599,6 +600,7 @@ async function saveProject() {
   const payload = {
     name: p.name,
     visibility: p.visibility,
+    viewers: (p.viewers || []).map((v) => (typeof v === 'object' ? v.id : v)),
     data: { catalog: p.catalog, scenarios: p.scenarios },
   };
   try {

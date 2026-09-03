@@ -29,6 +29,14 @@ export async function projectsDialog(callbacks) {
             `${p.catalogCount} catalog items · ${p.scenarioCount} scenarios · updated ${new Date(p.updated_at + 'Z').toLocaleString()}` }),
           el('div', { class: 'item-actions' }, [
             el('button', { class: 'btn small primary', text: 'Open', onClick: () => { close(); callbacks.onOpen(p.id); } }),
+            callbacks.canManage
+              ? el('button', { class: 'btn small', text: 'Manage', onClick: async () => {
+                  try {
+                    const { project } = await api.getProject(p.id);
+                    manageProjectDialog(project, () => { close(); projectsDialog(callbacks); });
+                  } catch (e) { toast(e.message, 'error'); }
+                } })
+              : null,
             p.canEdit
               ? el('button', { class: 'btn small danger', text: 'Delete', onClick: () => {
                   confirmDialog(`Delete project "${p.name}"?`, async () => {
@@ -83,6 +91,80 @@ export function newProjectDialog(onCreate) {
       ]),
     ]),
     { title: 'New Project' }
+  );
+}
+
+/**
+ * Admin "Manage sharing" dialog for an existing project. Lets an admin flip
+ * visibility between Restricted and Public, and — when Restricted — pick which
+ * users may view it. The project owner is always an implicit viewer, so they
+ * are excluded from the pick list. `onSaved()` runs after a successful save.
+ */
+export async function manageProjectDialog(project, onSaved) {
+  let users = [];
+  try {
+    const data = await api.listUsers();
+    users = data.users || [];
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+
+  // Users eligible to be assigned as viewers (everyone except the owner).
+  const assignable = users.filter((u) => u.id !== project.owner_id);
+  const currentViewerIds = new Set((project.viewers || []).map((v) => v.id));
+
+  const vis = el('select', {}, [
+    el('option', { value: 'restricted', ...(project.visibility === 'restricted' ? { selected: '' } : {}), text: 'Restricted' }),
+    el('option', { value: 'public', ...(project.visibility === 'public' ? { selected: '' } : {}), text: 'Public' }),
+  ]);
+
+  const checks = assignable.map((u) =>
+    el('label', { class: 'row', style: 'gap:var(--space-2); cursor:pointer' }, [
+      el('input', { type: 'checkbox', value: String(u.id), ...(currentViewerIds.has(u.id) ? { checked: '' } : {}) }),
+      el('span', { text: u.username }),
+    ])
+  );
+
+  const viewersBox = el('div', { class: 'list' },
+    checks.length ? checks : [el('p', { class: 'muted', text: 'No other users to assign.' })]
+  );
+
+  const viewersSection = el('div', {}, [
+    el('label', { text: 'Users who can view (Restricted)' }),
+    viewersBox,
+  ]);
+
+  const syncVisibility = () => {
+    viewersSection.style.display = vis.value === 'restricted' ? '' : 'none';
+  };
+  vis.addEventListener('change', syncVisibility);
+  syncVisibility();
+
+  openModal((close) =>
+    el('div', {}, [
+      el('div', { class: 'form-grid' }, [
+        el('label', { class: 'full-col' }, ['Visibility', vis]),
+      ]),
+      viewersSection,
+      el('div', { class: 'modal-actions' }, [
+        el('button', { class: 'btn', text: 'Cancel', onClick: close }),
+        el('button', { class: 'btn primary', text: 'Save', onClick: async () => {
+          const viewers = vis.value === 'restricted'
+            ? checks
+                .map((label) => label.querySelector('input'))
+                .filter((cb) => cb.checked)
+                .map((cb) => Number(cb.value))
+            : [];
+          try {
+            await api.updateProject(project.id, { visibility: vis.value, viewers });
+            toast('Sharing updated', 'ok');
+            close();
+            if (onSaved) onSaved();
+          } catch (e) { toast(e.message, 'error'); }
+        } }),
+      ]),
+    ]),
+    { title: `Manage "${project.name}"` }
   );
 }
 
