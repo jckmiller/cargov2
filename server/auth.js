@@ -1,7 +1,17 @@
 import jwt from 'jsonwebtoken';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'change-me-in-production';
+const DEFAULT_SECRET = 'change-me-in-production';
+const JWT_SECRET = process.env.JWT_SECRET || DEFAULT_SECRET;
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
+
+// Fail fast: never run in production with a missing or default signing secret,
+// otherwise tokens would be trivially forgeable.
+if (process.env.NODE_ENV === 'production' && JWT_SECRET === DEFAULT_SECRET) {
+  throw new Error(
+    'JWT_SECRET must be set to a strong, unique value in production. ' +
+      'Generate one with: openssl rand -hex 32'
+  );
+}
 
 /**
  * Create a signed JWT for a user record.

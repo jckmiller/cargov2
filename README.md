@@ -4,20 +4,49 @@ Interactive 3D web application for planning and visualizing cargo loads into
 shipping containers, with a smart auto-load engine, project inventories,
 side-by-side scenario comparison, and JWT-secured cloud persistence.
 
-## Quick start
+## Quick start (local dev)
 
 ```bash
 npm install        # compiles better-sqlite3 (native)
 npm start          # serves API + frontend on http://localhost:3000
 ```
 
-Open http://localhost:3000 and log in with the seeded admin account:
+In development (no `NODE_ENV=production`) a convenience admin is seeded on first
+run: **`admin` / `123123`**. This fallback is disabled in production.
 
-- **Username:** `admin`
-- **Password:** `123123`
+## Deploy with Docker (recommended)
 
-> Set `JWT_SECRET` (and optionally `PORT`, `DB_PATH`) via environment / `.env`
-> before deploying. See `.env.example`.
+The app ships as a single container. The SQLite database is kept in a named
+volume so it survives rebuilds/redeploys.
+
+```bash
+cp .env.example .env
+# Edit .env and set at minimum:
+#   JWT_SECRET      -> openssl rand -hex 32
+#   ADMIN_PASSWORD  -> strong password for the initial admin (first boot only)
+
+docker compose up -d --build
+curl http://127.0.0.1:3000/api/health     # -> {"status":"ok",...}
+```
+
+The container binds to `127.0.0.1:3000` on the host — put your TLS reverse
+proxy (Nginx/Caddy/Traefik) in front of it. Configuration is via environment
+variables (see `.env.example`):
+
+| Var | Purpose |
+| --- | --- |
+| `JWT_SECRET` | **Required in production.** Token signing key. |
+| `ADMIN_USERNAME` / `ADMIN_PASSWORD` | Seed the initial admin (first boot, empty DB). `ADMIN_PASSWORD` **required in production**. |
+| `JWT_EXPIRES_IN` | Token lifetime (default `7d`). |
+| `DB_PATH` | SQLite file path (default `/data/a3shipping.sqlite`, on the volume). |
+| `PORT` / `HOST` | Listen address (default `3000` / `0.0.0.0`). |
+| `CORS_ORIGIN` | Optional comma-separated cross-origin allow-list. |
+
+**Back up** the database by copying the volume contents (e.g.
+`docker compose cp app:/data ./backup`) or snapshotting the `a3-data` volume.
+
+In production the server **fails fast** if `JWT_SECRET` is unset/default, or if
+the database is empty and `ADMIN_PASSWORD` is not provided.
 
 ## Features
 

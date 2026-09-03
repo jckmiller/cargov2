@@ -1,0 +1,19 @@
+services:
+  app:
+    build: .
+    image: a3-shipping-pro:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      HOST: 0.0.0.0
+      DB_PATH: /data/a3shipping.sqlite
+    ports:
+      # Bind to loopback so your TLS reverse proxy fronts it, not the public IP.
+      - "127.0.0.1:${PORT:-3000}:3000"
+    volumes:
+      - a3-data:/data
+
+volumes:
+  a3-data:

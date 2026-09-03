@@ -57,18 +57,40 @@ function migrate() {
 }
 
 /**
- * Seed a default admin account (admin / 123123) if there are no users yet.
+ * Seed an initial admin account if there are no users yet. The username and
+ * password come from ADMIN_USERNAME / ADMIN_PASSWORD so no weak default
+ * credential ships to production. In production a password MUST be provided.
  */
 function seed() {
   const count = db.prepare('SELECT COUNT(*) AS n FROM users').get().n;
-  if (count === 0) {
+  if (count !== 0) return;
+
+  const username = process.env.ADMIN_USERNAME || 'admin';
+  const password = process.env.ADMIN_PASSWORD;
+
+  if (!password) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error(
+        'No users exist and ADMIN_PASSWORD is not set. Set ADMIN_PASSWORD ' +
+          '(and optionally ADMIN_USERNAME) to seed the initial admin account.'
+      );
+    }
+    // Development-only convenience fallback.
     const hash = bcrypt.hashSync('123123', 10);
     db.prepare(
       'INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)'
     ).run('admin', hash, 'admin');
     // eslint-disable-next-line no-console
-    console.log('[db] Seeded default admin user: admin / 123123');
+    console.log('[db] Seeded development admin user: admin / 123123');
+    return;
   }
+
+  const hash = bcrypt.hashSync(String(password), 10);
+  db.prepare(
+    'INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)'
+  ).run(String(username), hash, 'admin');
+  // eslint-disable-next-line no-console
+  console.log(`[db] Seeded initial admin user: ${username}`);
 }
 
 migrate();
