@@ -46,7 +46,10 @@ export class SceneManager {
     // Capture phase guarantees this runs ahead of OrbitControls' own listener.
     this._onPointerDownCapture = (e) => {
       const orbitModifier = e.button === 0 && (e.ctrlKey || e.metaKey);
-      this.controls.mouseButtons.LEFT = orbitModifier ? THREE.MOUSE.ROTATE : null;
+      // OrbitControls swaps ROTATE<->PAN internally when ctrl/meta/shift is held.
+      // Our orbit modifier is always held here, so map LEFT to PAN and let that
+      // swap turn it into an orbit (ROTATE) around the target (container center).
+      this.controls.mouseButtons.LEFT = orbitModifier ? THREE.MOUSE.PAN : null;
     };
     this.renderer.domElement.addEventListener(
       'pointerdown', this._onPointerDownCapture, { capture: true }
