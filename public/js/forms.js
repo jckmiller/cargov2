@@ -188,9 +188,9 @@ export function autoloadForm(currentContainer, onGenerate) {
       el('p', {
         class: 'muted small',
         text:
-          'Best-fills the project inventory across as many containers as needed: ' +
-          'it packs one container as full as possible, locks it as its own ' +
-          'scenario, then loads the remaining items into the next container.',
+          'Best-fills the remaining shipment inventory across as many containers ' +
+          'as needed: it packs one container as full as possible, locks it as its ' +
+          'own container loading, then loads the remaining items into the next.',
       }),
       el('div', { class: 'form-grid' }, [
         el('label', {}, ['Container', contSel]),
@@ -304,12 +304,30 @@ export function shortcutsModal() {
   ), { title: '⌨ Controls & Shortcuts' });
 }
 
-/** Comparison modal: stats table across all scenarios. onSwitch(id). */
+/**
+ * Shipment summary modal: a cross-container roll-up. Each container loading is a
+ * column, plus a "Shipment Total" column that sums the whole shipment. Below the
+ * per-container stats is an inventory reconciliation table (total qty vs.
+ * placed vs. remaining) so you can see what's still unshipped. onSwitch(id).
+ */
 export function compareModal(project, activeId, onSwitch) {
-  const scenarios = project.scenarios;
-  const stats = scenarios.map((s) => ({ s, st: scenarioStats(s) }));
-  const bestVol = Math.max(...stats.map((x) => x.st.volumePct), 0);
-  const bestItems = Math.max(...stats.map((x) => x.st.itemCount), 0);
+  const containers = project.scenarios;
+  const stats = containers.map((s) => ({ s, st: scenarioStats(s) }));
+
+  // Shipment-wide totals across every container loading.
+  const totals = stats.reduce(
+    (acc, x) => {
+      acc.itemCount += x.st.itemCount;
+      acc.totalWeight += x.st.totalWeight;
+      acc.usedVolume += x.st.usedVolume;
+      acc.containerVolume += x.st.containerVolume;
+      acc.hazmatCount += x.st.hazmatCount;
+      return acc;
+    },
+    { itemCount: 0, totalWeight: 0, usedVolume: 0, containerVolume: 0, hazmatCount: 0 }
+  );
+  const totalVolPct = totals.containerVolume
+    ? (totals.usedVolume / totals.containerVolume) * 100 : 0;
 
   const header = el('tr', {}, [
     el('th', { text: 'Metric' }),
@@ -323,39 +341,75 @@ export function compareModal(project, activeId, onSwitch) {
         }),
       ])
     ),
+    el('th', {}, [el('div', { text: 'Shipment Total' })]),
   ]);
 
-  function row(label, fn, bestTest) {
+  function row(label, fn, totalText) {
     return el('tr', {}, [
       el('td', { text: label }),
-      ...stats.map((x) => {
-        const val = fn(x.st, x.s);
-        const isBest = bestTest ? bestTest(x.st) : false;
-        return el('td', { class: isBest ? 'best' : '', text: val });
-      }),
+      ...stats.map((x) => el('td', { text: fn(x.st, x.s) })),
+      el('td', { class: 'best', text: totalText }),
     ]);
   }
 
   const table = el('table', { class: 'compare-table' }, [
     header,
-    row('Container', (_st, s) => getContainer(s.containerType).name),
-    row('Items placed', (st) => String(st.itemCount), (st) => st.itemCount === bestItems && bestItems > 0),
-    row('Total weight', (st) => `${fmtLb(st.totalWeight)} (${fmtPct(st.weightPct)})`),
-    row('Payload limit', (st) => fmtLb(st.payloadLb)),
-    row('Overweight?', (st) => (st.overweight ? '⚠ YES' : 'No')),
+    row('Container', (_st, s) => getContainer(s.containerType).name,
+      `${stats.length} container${stats.length === 1 ? '' : 's'}`),
+    row('Items placed', (st) => String(st.itemCount), String(totals.itemCount)),
+    row('Total weight', (st) => `${fmtLb(st.totalWeight)} (${fmtPct(st.weightPct)})`,
+      fmtLb(totals.totalWeight)),
+    row('Payload limit', (st) => fmtLb(st.payloadLb), '—'),
+    row('Overweight?', (st) => (st.overweight ? '⚠ YES' : 'No'),
+      stats.some((x) => x.st.overweight) ? '⚠ YES' : 'No'),
     row('Volume used', (st) => `${fmtFt3(st.usedVolume)} (${fmtPct(st.volumePct)})`,
-      (st) => st.volumePct === bestVol && bestVol > 0),
-    row('Hazmat items', (st) => String(st.hazmatCount)),
+      `${fmtFt3(totals.usedVolume)} (${fmtPct(totalVolPct)})`),
+    row('Hazmat items', (st) => String(st.hazmatCount), String(totals.hazmatCount)),
+  ]);
+
+  // Inventory reconciliation: total available vs. placed across all containers
+  // vs. remaining (unshipped). Placed count comes straight from placements so
+  // it reflects the shared consumed pool.
+  const placedByItem = new Map();
+  for (const s of containers) {
+    for (const p of s.placements || []) {
+      if (!p.catalogItemId) continue;
+      placedByItem.set(p.catalogItemId, (placedByItem.get(p.catalogItemId) || 0) + 1);
+    }
+  }
+  const invRows = (project.catalog || []).map((it) => {
+    const total = Math.max(0, Math.floor(it.qtyAvailable || 0));
+    const placed = placedByItem.get(it.id) || 0;
+    const remaining = Math.max(0, total - placed);
+    return el('tr', { class: remaining > 0 ? '' : 'best' }, [
+      el('td', { text: it.name }),
+      el('td', { text: String(total) }),
+      el('td', { text: String(placed) }),
+      el('td', { text: String(remaining) }),
+    ]);
+  });
+  const inventoryTable = el('table', { class: 'compare-table' }, [
+    el('tr', {}, [
+      el('th', { text: 'Item' }),
+      el('th', { text: 'Available' }),
+      el('th', { text: 'Placed' }),
+      el('th', { text: 'Remaining' }),
+    ]),
+    ...invRows,
   ]);
 
   openModal((close) =>
     el('div', {}, [
-      stats.length ? table : el('p', { class: 'muted', text: 'No scenarios to compare.' }),
+      containers.length ? table : el('p', { class: 'muted', text: 'No container loadings yet.' }),
+      el('h3', { text: 'Inventory reconciliation', style: 'margin-top:16px' }),
+      (project.catalog || []).length
+        ? inventoryTable
+        : el('p', { class: 'muted', text: 'No catalog items.' }),
       el('div', { class: 'modal-actions' }, [
         el('button', { class: 'btn primary', text: 'Close', onClick: close }),
       ]),
     ]),
-    { title: 'Compare Scenarios' }
+    { title: 'Shipment Summary' }
   );
 }
 

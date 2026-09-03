@@ -26,7 +26,7 @@ export async function projectsDialog(callbacks) {
             el('span', { class: 'chip', style: 'background:var(--accent-2)', text: p.visibility }),
           ]),
           el('div', { class: 'sub', text:
-            `${p.catalogCount} catalog items · ${p.scenarioCount} scenarios · updated ${new Date(p.updated_at + 'Z').toLocaleString()}` }),
+            `${p.catalogCount} catalog items · ${p.scenarioCount} container loadings · updated ${new Date(p.updated_at + 'Z').toLocaleString()}` }),
           el('div', { class: 'item-actions' }, [
             el('button', { class: 'btn small primary', text: 'Open', onClick: () => { close(); callbacks.onOpen(p.id); } }),
             callbacks.canManage

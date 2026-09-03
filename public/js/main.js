@@ -2,7 +2,7 @@
 import { api, loadToken, saveToken } from './api.js';
 import {
   state, setProject, newProject, makeScenario, activeScenario, catalogItem, markDirty,
-  setSelection, toggleSelection, clearSelection,
+  setSelection, toggleSelection, clearSelection, remainingQty,
 } from './store.js';
 import { SceneManager } from './scene.js';
 import { Interaction } from './interaction.js';
@@ -217,15 +217,10 @@ function addPlacementFromCatalog(catId) {
   const scn = activeScenario();
   const item = catalogItem(catId);
   if (!item) return;
-  // Items are single, independent units: a given catalog item may be placed at
-  // most once per scenario. If it's already placed here, re-select it instead
-  // of creating a duplicate.
-  const existing = scn.placements.find((p) => p.catalogItemId === item.id);
-  if (existing) {
-    setSelection(existing.id);
-    sm.syncPlacements(scn.placements, state.selectedPlacementIds);
-    toast(`"${item.name}" is already placed in this scenario`, 'warn');
-    renderCatalog(state.project, catalogHandlers(), scn);
+  // Inventory is a shared pool consumed across all container loadings. Refuse
+  // to place another unit once the item's remaining quantity is depleted.
+  if (remainingQty(item.id) <= 0) {
+    toast(`No units of "${item.name}" left in the shipment inventory`, 'warn');
     return;
   }
   const spec = getContainer(scn.containerType);
@@ -337,7 +332,7 @@ function scenarioHandlers() {
           el('button', { class: 'btn', text: 'Cancel', onClick: close }),
           el('button', { class: 'btn primary', text: 'Save', onClick: () => { s.name = input.value.trim() || s.name; markDirty(); renderAll(); close(); } }),
         ]),
-      ]), { title: 'Rename Scenario' });
+      ]), { title: 'Rename Container Loading' });
     },
     duplicate: (id) => {
       const s = state.project.scenarios.find((x) => x.id === id);
@@ -350,7 +345,7 @@ function scenarioHandlers() {
       markDirty(); renderAll();
     },
     remove: (id) => {
-      confirmDialog('Delete this scenario?', () => {
+      confirmDialog('Delete this container loading?', () => {
         const arr = state.project.scenarios;
         const idx = arr.findIndex((x) => x.id === id);
         if (idx >= 0) arr.splice(idx, 1);
@@ -396,9 +391,10 @@ function stagingHandlers() {
       const scn = activeScenario();
       const spec = getContainer(scn.containerType);
       const p = staging[i];
-      // Enforce one placement per catalog item per scenario.
-      if (p.catalogItemId && scn.placements.some((x) => x.catalogItemId === p.catalogItemId)) {
-        toast(`"${p.name}" is already placed in this scenario`, 'warn');
+      // Respect the shared inventory pool: only re-add if the item still has
+      // remaining (unshipped) units across all container loadings.
+      if (p.catalogItemId && remainingQty(p.catalogItemId) <= 0) {
+        toast(`No units of "${p.name}" left in the shipment inventory`, 'warn');
         return;
       }
       const spot = findFreePlacement(scn.placements, spec, p.dims, {
@@ -450,7 +446,7 @@ function wireToolbar() {
     });
   });
   document.getElementById('btn-add-scenario').addEventListener('click', () => {
-    const s = makeScenario(`Scenario ${state.project.scenarios.length + 1}`);
+    const s = makeScenario(`Container ${state.project.scenarios.length + 1}`);
     state.project.scenarios.push(s);
     state.activeScenarioId = s.id;
     markDirty(); renderAll();
@@ -458,7 +454,19 @@ function wireToolbar() {
   document.getElementById('btn-autoload').addEventListener('click', () => {
     const scn = activeScenario();
     autoloadForm(scn.containerType, ({ containerType, strategy, maxContainers }) => {
-      const result = packAll(state.project.catalog, {
+      // Pack only what's left in the shared shipment inventory (append mode):
+      // each container loading already consumed its units, so auto-load fills
+      // fresh containers from the remaining pool without double-counting.
+      const remainingCatalog = state.project.catalog
+        .map((it) => ({ ...it, qtyAvailable: remainingQty(it.id) }))
+        .filter((it) => it.qtyAvailable > 0);
+
+      if (!remainingCatalog.length) {
+        toast('No remaining inventory to pack — everything is already placed.', 'warn');
+        return;
+      }
+
+      const result = packAll(remainingCatalog, {
         containerType, strategy, maxContainers,
       });
 
@@ -467,14 +475,12 @@ function wireToolbar() {
         return;
       }
 
-      // Each packed container becomes its own new scenario (appended). This
-      // mirrors "pack one container out, lock it, start the next".
-      const multi = result.containers.length > 1;
+      // Each packed container becomes its own new container loading, appended
+      // after any existing ones. Numbering continues from the current count.
+      const base = state.project.scenarios.length;
       let firstId = null;
       result.containers.forEach((c, i) => {
-        const label = multi
-          ? `Auto — Container ${i + 1}/${result.containers.length}`
-          : 'Auto — Container 1';
+        const label = `Auto — Container ${base + i + 1}`;
         const s = makeScenario(label, c.containerType);
         s.placements = c.placements;
         s.generatedBy = strategy;
@@ -596,7 +602,7 @@ async function loadProject(id) {
       viewers: project.viewers || [],
       catalog: Array.isArray(data.catalog) ? data.catalog : [],
       scenarios: Array.isArray(data.scenarios) && data.scenarios.length
-        ? data.scenarios : [makeScenario('Scenario 1')],
+        ? data.scenarios : [makeScenario('Container 1')],
     });
     renderAll();
     toast(`Opened "${project.name}"`, 'ok');

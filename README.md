@@ -1,8 +1,9 @@
 # A3 Shipping Pro — 3D Container Loading Tool
 
 Interactive 3D web application for planning and visualizing cargo loads into
-shipping containers, with a smart auto-load engine, project inventories,
-side-by-side scenario comparison, and JWT-secured cloud persistence.
+shipping containers, with a smart auto-load engine, a shared project inventory
+consumed across multiple container loadings, a cross-container shipment
+summary, and JWT-secured cloud persistence.
 
 ## Quick start (local dev)
 
@@ -60,7 +61,10 @@ the database is empty and `ADMIN_PASSWORD` is not provided.
 
 ### Cargo & projects
 - **Projects** bundle an **item catalog** (all potential packages + quantity
-  available) and multiple **scenarios** (candidate load plans).
+  available) and multiple **container loadings**. The catalog is a single shared
+  inventory pool: placing a unit into any container loading draws down its
+  remaining quantity, so the same inventory can't be over-placed across the
+  shipment (restricted loading across multiple containers).
 - Custom items, grouped item library + saveable custom presets.
 - CSV import to populate the catalog in bulk (with a downloadable sample template).
 - Categories (general/fragile/heavy/hazardous/perishable) with color coding.
@@ -69,9 +73,11 @@ the database is empty and `ADMIN_PASSWORD` is not provided.
 
 ### 🧠 Smart auto-load engine
 - **Sequential multi-container best-fill:** packs one container as full as
-  possible, "locks" it as its own scenario (`Auto — Container 1`, `2`, `3`…),
-  then loads the remaining items into the next container, repeating until the
-  inventory is placed (or a configurable **Max containers** cap is hit).
+  possible, "locks" it as its own container loading (`Auto — Container 1`, `2`,
+  `3`…), then loads the remaining items into the next container, repeating until
+  the inventory is placed (or a configurable **Max containers** cap is hit).
+  Auto-load appends new container loadings and only packs inventory that hasn't
+  already been placed.
 - **Best-fill selection:** for each container it tries several arrival orderings
   (heaviest-first, densest, largest-volume, largest-footprint, tallest) and
   keeps the packing that fills the box best — so it "picks through" the catalog
@@ -82,10 +88,11 @@ the database is empty and `ADMIN_PASSWORD` is not provided.
 - Also: **Maximize volume** and **Fewest containers** strategies.
 - Items that fit no container (e.g. oversized) are sent to the staging area.
 
-### Comparison
-- Side-by-side stats table across all scenarios (weight, volume %, item counts,
-  hazmat, overweight flags) with best-value highlighting.
-- One shared, fully-interactive 3D viewport with a scenario switcher.
+### Shipment summary
+- Cross-container roll-up: per-container stats (weight, volume %, item counts,
+  hazmat, overweight flags) plus a **Shipment Total** column.
+- Inventory reconciliation table (available vs. placed vs. remaining per item).
+- One shared, fully-interactive 3D viewport with a container-loading switcher.
 
 ### Reporting & export
 - Real-time statistics, step-by-step load plan, printable manifest,

@@ -66,7 +66,7 @@ export function markDirty() {
 
 /** Create an empty project scaffold. */
 export function newProject(name = 'Untitled Project') {
-  const scenario = makeScenario('Scenario 1');
+  const scenario = makeScenario('Container 1');
   return {
     id: null,
     name,
@@ -77,7 +77,7 @@ export function newProject(name = 'Untitled Project') {
   };
 }
 
-export function makeScenario(name = 'New Scenario', containerType = '20STD') {
+export function makeScenario(name = 'New Container', containerType = '20STD') {
   return {
     id: uid('scn'),
     name,
@@ -99,6 +99,37 @@ export function activeScenario() {
 export function catalogItem(id) {
   if (!state.project) return null;
   return state.project.catalog.find((c) => c.id === id) || null;
+}
+
+/**
+ * Count how many units of a catalog item are placed across ALL container
+ * loadings (the shared shipment). Only live placements consume inventory —
+ * staged items do not count (they've been pulled back out of the shipment).
+ * When `excludeContainerId` is given, that container's placements are ignored
+ * (useful when previewing a move/replace).
+ */
+export function placedQty(catalogItemId, excludeContainerId = null) {
+  if (!state.project || !catalogItemId) return 0;
+  let n = 0;
+  for (const s of state.project.scenarios) {
+    if (excludeContainerId && s.id === excludeContainerId) continue;
+    for (const p of s.placements || []) {
+      if (p.catalogItemId === catalogItemId) n += 1;
+    }
+  }
+  return n;
+}
+
+/**
+ * Remaining (unshipped) quantity of a catalog item: its available total minus
+ * the units already placed into container loadings across the whole shipment.
+ * Never returns a negative number.
+ */
+export function remainingQty(catalogItemId) {
+  const item = catalogItem(catalogItemId);
+  if (!item) return 0;
+  const total = Math.max(0, Math.floor(item.qtyAvailable || 0));
+  return Math.max(0, total - placedQty(catalogItemId));
 }
 
 export function setProject(project) {

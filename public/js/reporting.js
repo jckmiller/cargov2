@@ -36,7 +36,7 @@ function formatDate(d = new Date()) {
 // Load plan model
 // ---------------------------------------------------------------------------
 
-/** Generate step-by-step loading instructions from a scenario. */
+/** Generate step-by-step loading instructions from a container loading. */
 export function generateLoadPlan(scenario) {
   // Order: bottom layers first, then front-to-back, left-to-right.
   const ordered = [...scenario.placements].sort((a, b) => {
@@ -368,12 +368,12 @@ export function manifestHTML(project, scenario, user, isoImage) {
           <td class="num">${escapeHtml(fmtLb(st.totalWeight))}</td>
         </tr></tfoot>
       </table>`
-    : '<div class="rp-empty">No items placed in this scenario.</div>';
+    : '<div class="rp-empty">No items placed in this container loading.</div>';
 
   return `${masthead('Packing Manifest', `${BRAND.product} · ${BRAND.tagline}`)}
     ${metaGrid([
       ['Project', project?.name || '—'],
-      ['Scenario', scenario.name],
+      ['Container Loading', scenario.name],
       ['Container', spec.name],
       ['Internal Dimensions', dims],
       ['Payload Limit', fmtLb(spec.payloadLb)],
@@ -460,7 +460,7 @@ export function loadPlanHTML(scenario, project, user, views) {
   return `${masthead('Load Plan', `${BRAND.product} · ${BRAND.tagline}`)}
     ${metaGrid([
       ['Project', project?.name || '—'],
-      ['Scenario', scenario.name],
+      ['Container Loading', scenario.name],
       ['Container', spec.name],
       ['Prepared By', user?.username || '—'],
     ])}

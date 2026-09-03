@@ -4,9 +4,10 @@ import { CATEGORIES, itemColor } from './cargo.js';
 import { getContainer, fmtInches } from './container.js';
 import { scenarioStats, fmtLb, fmtPct, fmtFt3 } from './stats.js';
 import { BUILTIN_GROUPS, loadCustomPresets } from './library.js';
+import { remainingQty } from './store.js';
 
 export function renderScenarios(project, activeId, handlers) {
-  const host = document.getElementById('scenario-list');
+  const host = document.getElementById('container-list');
   host.innerHTML = '';
   for (const s of project.scenarios) {
     const st = scenarioStats(s);
@@ -37,23 +38,22 @@ export function renderCatalog(project, handlers, activeScenario) {
   if (!project.catalog.length) {
     host.appendChild(el('p', { class: 'muted small', text: 'No items yet. Add items or use the library.' }));
   }
-  // Items are single independent units: each catalog item can be placed at most
-  // once in the active scenario. Track what's already placed to disable re-placing.
-  const placedIds = new Set(
-    (activeScenario?.placements || [])
-      .map((p) => p.catalogItemId)
-      .filter(Boolean)
-  );
+  // Inventory is a single shared pool consumed across ALL container loadings.
+  // Placing a unit into any container draws down the item's remaining quantity
+  // so the same inventory can't be over-placed across the shipment.
   for (const it of project.catalog) {
-    const isPlaced = placedIds.has(it.id);
-    const placeBtn = isPlaced
-      ? el('button', { class: 'btn small', text: 'Placed', disabled: '', title: 'Already placed in this scenario' })
+    const total = Math.max(0, Math.floor(it.qtyAvailable || 0));
+    const remaining = remainingQty(it.id);
+    const depleted = remaining <= 0;
+    const chipText = total ? `${remaining} / ${total} left` : 'none available';
+    const placeBtn = depleted
+      ? el('button', { class: 'btn small', text: '+ Place', disabled: '', title: 'No units left in the shipment inventory' })
       : el('button', { class: 'btn small primary', text: '+ Place', onClick: () => handlers.place(it.id) });
     host.appendChild(
-      el('div', { class: `list-item ${isPlaced ? 'placed' : ''}` }, [
+      el('div', { class: `list-item ${depleted ? 'placed' : ''}` }, [
         el('div', { class: 'row' }, [
           el('span', { class: 'title', text: it.name }),
-          el('span', { class: 'chip', style: `background:${itemColor(it)}`, text: isPlaced ? 'placed' : 'available' }),
+          el('span', { class: 'chip', style: `background:${itemColor(it)}`, text: chipText }),
         ]),
         el('div', { class: 'sub', text:
           `${CATEGORIES[it.category]?.label || it.category} · ${fmtInches(it.length)}×${fmtInches(it.width)}×${fmtInches(it.height)} · ${Math.round(it.weight)} lb` }),
