@@ -84,16 +84,19 @@ export function makeCatalogItem(partial = {}) {
 /**
  * Can `top` item be stacked on top of `base` item?
  * Rules:
- *  - base must allow top's category in base.stackUnder
- *  - top must allow base's category in top.stackOn
+ *  - the floor (no base) is always a valid support
  *  - never stack anything on a fragile base
+ *  - never stack hazmat-incompatible items together
+ *  - otherwise any base can support any top, so items can be placed higher
+ *    (stacked) once the floor is full
  */
 export function canStack(top, base) {
-  if (!base) return true; // floor
-  if (base.category === 'fragile') return false;
-  const baseAllows = !base.stackUnder || base.stackUnder.includes(top.category);
-  const topAllows = !top.stackOn || top.stackOn.includes(base.category);
-  return baseAllows && topAllows;
+  if (!base) return true; // floor is always a valid base
+  if (base.category === 'fragile') return false; // never stack on a fragile base
+  // Keep hazmat segregation; otherwise allow stacking on any base so items can
+  // be placed higher when the floor is full (no stackOn/stackUnder category gate).
+  if (hazmatIncompatible(top?.hazmatClass, base?.hazmatClass)) return false;
+  return true;
 }
 
 export function itemVolumeFt3(item) {
