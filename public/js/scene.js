@@ -29,15 +29,31 @@ export class SceneManager {
     this.renderer.setSize(rect.width, rect.height);
     this.el.appendChild(this.renderer.domElement);
 
-    // Orbit with right-drag; disable left rotate so left is free for dragging cargo.
+    // Orbit with Ctrl/Cmd + left-drag; plain left-drag stays free for cargo.
+    // LEFT is assigned ROTATE on the fly (see the pointerdown handler below)
+    // only while Ctrl or Cmd is held, so it works across Windows/Linux/Mac.
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
     this.controls.mouseButtons = {
       LEFT: null,
       MIDDLE: THREE.MOUSE.DOLLY,
-      RIGHT: THREE.MOUSE.ROTATE,
+      RIGHT: null,
     };
+
+    // Decide orbit-vs-drag on pointerdown, before OrbitControls reads the map.
+    // Capture phase guarantees this runs ahead of OrbitControls' own listener.
+    this._onPointerDownCapture = (e) => {
+      const orbitModifier = e.button === 0 && (e.ctrlKey || e.metaKey);
+      this.controls.mouseButtons.LEFT = orbitModifier ? THREE.MOUSE.ROTATE : null;
+    };
+    this.renderer.domElement.addEventListener(
+      'pointerdown', this._onPointerDownCapture, { capture: true }
+    );
+    // Right-drag no longer orbits; suppress the canvas context menu so a Mac
+    // Ctrl+left-drag never pops the browser menu mid-orbit.
+    this._onContextMenu = (e) => e.preventDefault();
+    this.renderer.domElement.addEventListener('contextmenu', this._onContextMenu);
 
     // Lights
     const amb = new THREE.AmbientLight(0xffffff, 0.75);
@@ -332,6 +348,10 @@ export class SceneManager {
   dispose() {
     cancelAnimationFrame(this._raf);
     window.removeEventListener('resize', this._onResize);
+    this.renderer.domElement.removeEventListener(
+      'pointerdown', this._onPointerDownCapture, { capture: true }
+    );
+    this.renderer.domElement.removeEventListener('contextmenu', this._onContextMenu);
     this.renderer.dispose();
     if (this.renderer.domElement.parentNode) {
       this.renderer.domElement.parentNode.removeChild(this.renderer.domElement);

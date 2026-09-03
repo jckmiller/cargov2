@@ -41,7 +41,7 @@ export class Interaction {
   }
 
   onDown(e) {
-    if (e.button !== 0) return; // left only; right = orbit
+    if (e.button !== 0 || e.ctrlKey || e.metaKey) return; // plain left = drag; Ctrl/Cmd+left = orbit
     this.setPointer(e);
     const group = this.pickPlacement();
     if (!group) {
