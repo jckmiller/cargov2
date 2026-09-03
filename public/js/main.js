@@ -14,7 +14,7 @@ import {
   renderScenarios, renderCatalog, renderLibrary, renderStats, renderStaging,
 } from './panels.js';
 import { el, toast, openModal, confirmDialog, makeCollapsible } from './ui.js';
-import { itemForm, autoloadForm, loadPlanModal, compareModal, catalogImportForm } from './forms.js';
+import { itemForm, autoloadForm, loadPlanModal, compareModal, catalogImportForm, shortcutsModal } from './forms.js';
 import { projectsDialog, newProjectDialog, usersDialog } from './dialogs.js';
 import { printManifest, downloadPNG } from './reporting.js';
 import { exportProjectJSON, importProjectJSON } from './io.js';
@@ -544,6 +544,15 @@ function wireToolbar() {
     importInput.value = '';
   });
   document.getElementById('btn-import-json').addEventListener('click', () => importInput.click());
+
+  // Controls & shortcuts reference (replaces the old always-on hint bar).
+  document.getElementById('btn-shortcuts').addEventListener('click', () => shortcutsModal());
+  window.addEventListener('keydown', (e) => {
+    if (e.key !== '?') return;
+    const tag = (e.target && e.target.tagName) || '';
+    if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) || e.target.isContentEditable) return;
+    shortcutsModal();
+  });
 }
 
 function wireTopbar() {

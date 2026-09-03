@@ -255,6 +255,55 @@ export function loadPlanModal(scenario, project, user, views) {
   }, { title: 'Load Plan' });
 }
 
+/**
+ * Controls & shortcuts reference. Replaces the old always-on hint bar with a
+ * grouped, readable modal opened from the scene toolbar (or the "?" key).
+ * Each entry is [keys[], description]; keys render as <kbd> chips.
+ */
+export function shortcutsModal() {
+  const GROUPS = [
+    ['Selection', [
+      [['Click'], 'Select an item'],
+      [['Shift', 'Click'], 'Add / remove from multi-selection'],
+      [['Dbl-Click'], 'Open item details'],
+    ]],
+    ['Move', [
+      [['Drag'], 'Move item (drops to floor)'],
+      [['Shift', 'Drag'], 'Stack on the item below'],
+      [['Drag'], 'Move whole selection as one group'],
+      [['←', '↑', '↓', '→'], 'Nudge (hold Alt for a 6" step)'],
+      [['PgUp', 'PgDn'], 'Raise / lower'],
+    ]],
+    ['Transform', [
+      [['R'], 'Rotate 90°'],
+      [['T'], 'Tip forward'],
+      [['E'], 'Edit item'],
+      [['Del'], 'Remove item'],
+    ]],
+    ['View', [
+      [['L'], 'Toggle labels'],
+      [['Right-Drag'], 'Orbit camera'],
+      [['Scroll'], 'Zoom'],
+    ]],
+  ];
+
+  function keyRow([keys, desc]) {
+    return el('div', { class: 'shortcuts-row' }, [
+      el('span', { class: 'keys' }, keys.map((k) => el('kbd', { text: k }))),
+      el('span', { class: 'desc', text: desc }),
+    ]);
+  }
+
+  openModal(() => el('div', { class: 'shortcuts' },
+    GROUPS.map(([title, rows]) =>
+      el('div', { class: 'shortcuts-group' }, [
+        el('h3', { text: title }),
+        ...rows.map(keyRow),
+      ])
+    )
+  ), { title: '⌨ Controls & Shortcuts' });
+}
+
 /** Comparison modal: stats table across all scenarios. onSwitch(id). */
 export function compareModal(project, activeId, onSwitch) {
   const scenarios = project.scenarios;
