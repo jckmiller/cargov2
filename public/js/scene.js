@@ -99,6 +99,10 @@ export class SceneManager {
 
   /** Build the container wireframe + floor grid, and frame the camera. */
   setContainer(containerType) {
+    // Only re-frame the camera on the first build or when the container type
+    // actually changes. Plain refreshes (place/delete/edit/nudge/etc.) rebuild
+    // the geometry but must preserve the user's current viewpoint.
+    const changed = this._containerType !== containerType;
     this.containerGroup.clear();
     this._containerType = containerType;
     const spec = getContainer(containerType);
@@ -135,9 +139,11 @@ export class SceneManager {
     this.grid.position.set(L / 2, 0.002, W / 2);
     this.containerGroup.add(this.grid);
 
-    this.controls.target.set(L / 2, H / 2, W / 2);
-    this.camera.position.set(L / 2 + L * 0.7, H + L * 0.5, W / 2 + W * 2.2);
-    this.controls.update();
+    if (changed) {
+      this.controls.target.set(L / 2, H / 2, W / 2);
+      this.camera.position.set(L / 2 + L * 0.7, H + L * 0.5, W / 2 + W * 2.2);
+      this.controls.update();
+    }
   }
 
   clearCargo() {
