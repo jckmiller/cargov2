@@ -2,6 +2,7 @@
 import { api, loadToken, saveToken } from './api.js';
 import {
   state, setProject, newProject, makeScenario, activeScenario, catalogItem, markDirty,
+  setSelection, toggleSelection, clearSelection,
 } from './store.js';
 import { SceneManager } from './scene.js';
 import { Interaction } from './interaction.js';
@@ -160,7 +161,12 @@ function initScene() {
   });
 
   interaction = new Interaction(sm, {
-    onSelect: (id) => { state.selectedPlacementId = id; sm.syncPlacements(activeScenario().placements, id); updateNudgePad(); },
+    onSelect: (id, opts = {}) => {
+      if (opts.toggle) toggleSelection(id);
+      else setSelection(id);
+      sm.syncPlacements(activeScenario().placements, state.selectedPlacementIds);
+      updateNudgePad();
+    },
     onChange: () => { markDirty(); renderStats(activeScenario()); renderScenarios(state.project, state.activeScenarioId, scenarioHandlers()); },
     onEdit: (id) => editPlacement(id),
     onDetails: (id) => showDetails(id),
@@ -168,6 +174,7 @@ function initScene() {
     onToggleLabels: () => toggleLabels(),
     getContainerSpec: () => getContainer(activeScenario().containerType),
     getSelectedId: () => state.selectedPlacementId,
+    getSelectedIds: () => state.selectedPlacementIds,
   });
 }
 
@@ -177,7 +184,7 @@ function refreshScene() {
   sm.setContainer(scn.containerType);
   sm.clearCargo();
   sm.setLabelsVisible(state.labelsVisible);
-  sm.syncPlacements(scn.placements, state.selectedPlacementId);
+  sm.syncPlacements(scn.placements, state.selectedPlacementIds);
   const sel = document.getElementById('container-select');
   sel.value = scn.containerType;
 }
@@ -200,7 +207,7 @@ function renderAll() {
 function updateNudgePad() {
   const pad = document.getElementById('nudge-pad');
   if (!pad) return;
-  const enabled = !!state.selectedPlacementId;
+  const enabled = state.selectedPlacementIds.length > 0;
   pad.classList.toggle('disabled', !enabled);
   pad.querySelectorAll('button.nudge').forEach((b) => { b.disabled = !enabled; });
 }
@@ -215,8 +222,8 @@ function addPlacementFromCatalog(catId) {
   // of creating a duplicate.
   const existing = scn.placements.find((p) => p.catalogItemId === item.id);
   if (existing) {
-    state.selectedPlacementId = existing.id;
-    sm.syncPlacements(scn.placements, existing.id);
+    setSelection(existing.id);
+    sm.syncPlacements(scn.placements, state.selectedPlacementIds);
     toast(`"${item.name}" is already placed in this scenario`, 'warn');
     renderCatalog(state.project, catalogHandlers(), scn);
     return;
@@ -255,7 +262,7 @@ function addPlacementFromCatalog(catId) {
       staging.splice(i, 1);
     }
   }
-  state.selectedPlacementId = p.id;
+  setSelection(p.id);
   markDirty();
   renderAll();
 }
@@ -304,7 +311,10 @@ function removePlacement(id) {
   if (idx < 0) return;
   staging.push(scn.placements[idx]);
   scn.placements.splice(idx, 1);
-  if (state.selectedPlacementId === id) state.selectedPlacementId = null;
+  // Drop the removed item from the (possibly multi-) selection.
+  if (state.selectedPlacementIds.includes(id)) {
+    setSelection(state.selectedPlacementIds.filter((x) => x !== id));
+  }
   markDirty();
   renderAll();
 }
@@ -317,7 +327,7 @@ function toggleLabels() {
 // ---------- Panel handlers ----------
 function scenarioHandlers() {
   return {
-    select: (id) => { state.activeScenarioId = id; state.selectedPlacementId = null; renderAll(); },
+    select: (id) => { state.activeScenarioId = id; clearSelection(); renderAll(); },
     rename: (id) => {
       const s = state.project.scenarios.find((x) => x.id === id);
       const input = el('input', { value: s.name });
@@ -495,14 +505,16 @@ function wireToolbar() {
   document.getElementById('btn-rotate').addEventListener('click', () => interaction.onKey({ key: 'r', target: {} }));
   document.getElementById('btn-tip').addEventListener('click', () => interaction.onKey({ key: 't', target: {} }));
   document.getElementById('btn-delete').addEventListener('click', () => {
-    if (state.selectedPlacementId) removePlacement(state.selectedPlacementId);
+    // Delete the whole selection (a copy — removePlacement mutates the set).
+    const ids = [...state.selectedPlacementIds];
+    for (const id of ids) removePlacement(id);
   });
 
   // Fine-tune "Move" pad: nudge the selected item along the viewer's axes.
   // Hold Alt while clicking for a coarse 6" step (matches the arrow-key path).
   document.querySelectorAll('#nudge-pad button.nudge').forEach((btn) => {
     btn.addEventListener('click', (e) => {
-      if (!state.selectedPlacementId) return;
+      if (!state.selectedPlacementIds.length) return;
       const step = (e.altKey ? 6 : 1) / 12; // feet
       interaction.nudgeByView(btn.dataset.dir, step);
     });
@@ -542,7 +554,7 @@ function wireTopbar() {
   document.getElementById('btn-admin').addEventListener('click', () => usersDialog());
   document.getElementById('btn-compare').addEventListener('click', () => {
     compareModal(state.project, state.activeScenarioId, (id) => {
-      state.activeScenarioId = id; state.selectedPlacementId = null; renderAll();
+      state.activeScenarioId = id; clearSelection(); renderAll();
     });
   });
   document.getElementById('btn-projects').addEventListener('click', () => {

@@ -1,6 +1,13 @@
 // Pointer + keyboard interaction: select, drag (drops to the floor by default),
-// Shift-drag to stack on another item, rotate (R), tip (T), delete,
+// Shift-click to build a multi-selection, rotate (R), tip (T), delete,
 // dbl-click details.
+//
+// Multi-select + move-as-one: Shift-click toggles items in/out of a selection
+// set. Plain-dragging any member of the set translates the whole set as a rigid
+// group — every member keeps its relative position and height so the group
+// moves as one, validated all-or-nothing against non-selected items. Delete and
+// the nudge pad/arrow keys act on the whole set; rotate/tip/edit/details act on
+// the primary (last-clicked) item.
 import * as THREE from 'three';
 import { activeScenario, catalogItem } from './store.js';
 import { collidesAny, restingY } from './cargo.js';
@@ -9,7 +16,9 @@ import { toast } from './ui.js';
 export class Interaction {
   constructor(sceneMgr, callbacks) {
     this.sm = sceneMgr;
-    this.cb = callbacks; // { onSelect, onChange, onEdit, onDetails, getContainerSpec }
+    // callbacks: { onSelect(id,{toggle}), onChange, onEdit, onDetails, onDelete,
+    //   onToggleLabels, getContainerSpec, getSelectedId, getSelectedIds }
+    this.cb = callbacks;
     this.raycaster = new THREE.Raycaster();
     this.pointer = new THREE.Vector2();
     this.dragging = null; // { placement, group, offset }
@@ -45,33 +54,91 @@ export class Interaction {
     this.setPointer(e);
     const group = this.pickPlacement();
     if (!group) {
-      this.cb.onSelect(null);
+      // Empty space: Shift-click keeps the current set (avoids accidental
+      // clears while building a selection); a plain click clears it.
+      if (!e.shiftKey) this.cb.onSelect(null);
       return;
     }
     const id = group.userData.placementId;
     const scenario = activeScenario();
     const placement = scenario?.placements.find((p) => p.id === id);
     if (!placement) return;
-    this.cb.onSelect(id);
 
-    // Begin drag on the horizontal plane at the item's base height.
+    const currentSet = this.getSelectedIds();
+    const inMultiSelection = currentSet.length > 1 && currentSet.includes(id);
+
+    // Shift decides between two actions based on whether the user drags:
+    //   • Shift+click (no movement) → toggle this item in/out of the selection.
+    //   • Shift+drag → classic "stack on item" for this single item.
+    // We can't know which until pointerup, so begin a single-item stack-drag
+    // now and remember to toggle the selection on release if nothing moved.
+    if (e.shiftKey) {
+      this.dragPlane.constant = -placement.y;
+      this.raycaster.setFromCamera(this.pointer, this.sm.camera);
+      const hit0 = new THREE.Vector3();
+      this.raycaster.ray.intersectPlane(this.dragPlane, hit0);
+      this.dragging = {
+        members: [{
+          placement,
+          offset: new THREE.Vector3(hit0.x - placement.x, 0, hit0.z - placement.z),
+          lastValid: { x: placement.x, y: placement.y, z: placement.z },
+        }],
+        isGroup: false,
+        stackMode: true,
+        moveSet: new Set([id]),
+        anchor: new THREE.Vector3(hit0.x, 0, hit0.z),
+        moved: false,
+        shiftToggleId: id, // toggle selection on pointerup if no drag occurs
+      };
+      return;
+    }
+
+    // Plain click. If the item is already part of a multi-selection, keep the
+    // whole set and drag it as one group. Otherwise select just this item.
+    if (!inMultiSelection) {
+      this.cb.onSelect(id);
+    }
+
+    // Determine the group of placements to move. A single selection moves just
+    // itself; a multi-selection moves every member together.
+    const moveIds = inMultiSelection ? this.getSelectedIds() : [id];
+    const members = moveIds
+      .map((mid) => scenario.placements.find((p) => p.id === mid))
+      .filter(Boolean);
+    const isGroup = members.length > 1;
+
+    // Begin drag on the horizontal plane at the primary item's base height.
     this.dragPlane.constant = -placement.y;
     this.raycaster.setFromCamera(this.pointer, this.sm.camera);
     const hit = new THREE.Vector3();
     this.raycaster.ray.intersectPlane(this.dragPlane, hit);
+    // Anchor = pointer's XZ on the drag plane. Each member records its own
+    // offset from the anchor so the group translates rigidly.
     this.dragging = {
-      placement,
-      group,
-      stackMode: e.shiftKey, // hold Shift to place on top of another item
-      offset: new THREE.Vector3(
-        hit.x - (placement.x + placement.dims.l / 2),
-        0,
-        hit.z - (placement.z + placement.dims.w / 2)
-      ),
+      members: members.map((p) => ({
+        placement: p,
+        offset: new THREE.Vector3(hit.x - p.x, 0, hit.z - p.z),
+        lastValid: { x: p.x, y: p.y, z: p.z },
+      })),
+      isGroup,
+      // Single-item drags honor the classic Shift-to-stack behavior. Group
+      // drags translate rigidly (each member keeps its height) so the set moves
+      // "as one", so stackMode only applies to single-item drags.
+      stackMode: isGroup ? false : e.shiftKey,
+      moveSet: new Set(moveIds),
+      anchor: new THREE.Vector3(hit.x, 0, hit.z),
       moved: false,
-      // Last known non-overlapping pose; drops that would overlap snap back here.
-      lastValid: { x: placement.x, y: placement.y, z: placement.z },
     };
+  }
+
+  /** Current multi-selection ids (falls back to the single selected id). */
+  getSelectedIds() {
+    if (this.cb.getSelectedIds) {
+      const ids = this.cb.getSelectedIds();
+      if (Array.isArray(ids)) return ids;
+    }
+    const one = this.cb.getSelectedId();
+    return one ? [one] : [];
   }
 
   onMove(e) {
@@ -81,10 +148,20 @@ export class Interaction {
     const hit = new THREE.Vector3();
     if (!this.raycaster.ray.intersectPlane(this.dragPlane, hit)) return;
 
-    const p = this.dragging.placement;
+    if (this.dragging.isGroup) {
+      this.moveGroup(hit);
+    } else {
+      this.moveSingle(hit);
+    }
+  }
+
+  /** Single-item drag: floor by default, Shift settles on supports beneath. */
+  moveSingle(hit) {
+    const d = this.dragging.members[0];
+    const p = d.placement;
     const spec = this.cb.getContainerSpec();
-    let nx = hit.x - this.dragging.offset.x - p.dims.l / 2;
-    let nz = hit.z - this.dragging.offset.z - p.dims.w / 2;
+    let nx = hit.x - d.offset.x;
+    let nz = hit.z - d.offset.z;
     // Clamp inside container footprint.
     nx = Math.max(0, Math.min(nx, spec.length - p.dims.l));
     nz = Math.max(0, Math.min(nz, spec.width - p.dims.w));
@@ -109,21 +186,90 @@ export class Interaction {
       p.z = candidate.z;
       p.y = candidate.y;
       p.layer = p.y <= 1e-6 ? 0 : 1;
-      this.dragging.lastValid = { x: p.x, y: p.y, z: p.z };
+      d.lastValid = { x: p.x, y: p.y, z: p.z };
       this.dragging.moved = true;
     } else {
       // Keep the item at its last valid, non-overlapping pose.
-      p.x = this.dragging.lastValid.x;
-      p.y = this.dragging.lastValid.y;
-      p.z = this.dragging.lastValid.z;
+      p.x = d.lastValid.x;
+      p.y = d.lastValid.y;
+      p.z = d.lastValid.z;
       p.layer = p.y <= 1e-6 ? 0 : 1;
     }
     this.sm.upsertPlacement(p, true);
   }
 
+  /**
+   * Group drag: translate every selected item rigidly by a single XZ delta,
+   * preserving each member's relative position and height. The delta is clamped
+   * so the group's bounding footprint stays inside the container, then the pose
+   * is accepted only if no member collides with a non-selected item; otherwise
+   * the whole group holds its last valid pose.
+   */
+  moveGroup(hit) {
+    const spec = this.cb.getContainerSpec();
+    const members = this.dragging.members;
+
+    // Desired delta from the drag anchor, then clamp so no member leaves the
+    // container footprint. We clamp the shared delta (not each item) so the
+    // group stays rigid.
+    let dx = hit.x - this.dragging.anchor.x;
+    let dz = hit.z - this.dragging.anchor.z;
+    for (const m of members) {
+      const p = m.placement;
+      const base = m.lastValid; // translate relative to the last valid pose
+      dx = Math.max(-base.x, Math.min(dx, spec.length - p.dims.l - base.x));
+      dz = Math.max(-base.z, Math.min(dz, spec.width - p.dims.w - base.z));
+    }
+
+    // Build candidate poses for the whole group at the clamped delta.
+    const moveSet = this.dragging.moveSet;
+    const others = activeScenario().placements.filter((o) => !moveSet.has(o.id));
+    const candidates = members.map((m) => ({
+      id: m.placement.id,
+      catalogItemId: m.placement.catalogItemId,
+      x: m.lastValid.x + dx,
+      z: m.lastValid.z + dz,
+      y: m.lastValid.y,
+      dims: m.placement.dims,
+    }));
+
+    // Accept only if every member clears the non-selected items.
+    const accepted = candidates.every((c) => !collidesAny(c, others));
+
+    for (let i = 0; i < members.length; i++) {
+      const p = members[i].placement;
+      if (accepted) {
+        const c = candidates[i];
+        p.x = c.x;
+        p.z = c.z;
+        p.y = c.y;
+        p.layer = p.y <= 1e-6 ? 0 : 1;
+        members[i].lastValid = { x: p.x, y: p.y, z: p.z };
+      } else {
+        const lv = members[i].lastValid;
+        p.x = lv.x;
+        p.y = lv.y;
+        p.z = lv.z;
+        p.layer = p.y <= 1e-6 ? 0 : 1;
+      }
+      this.sm.upsertPlacement(p, true);
+    }
+    if (accepted && (dx !== 0 || dz !== 0)) this.dragging.moved = true;
+  }
+
   onUp() {
-    if (this.dragging && this.dragging.moved) {
-      this.cb.onChange();
+    if (this.dragging) {
+      if (this.dragging.moved) {
+        // A Shift+drag that actually stacked a single item selects it (matching
+        // the classic behavior) so state and highlight stay in sync.
+        if (this.dragging.shiftToggleId) {
+          this.cb.onSelect(this.dragging.shiftToggleId);
+        }
+        this.cb.onChange();
+      } else if (this.dragging.shiftToggleId) {
+        // Shift+click without a drag: toggle the item in the multi-selection.
+        this.cb.onSelect(this.dragging.shiftToggleId, { toggle: true });
+      }
     }
     this.dragging = null;
   }
@@ -189,8 +335,12 @@ export class Interaction {
       this.cb.onEdit(id);
     } else if (key === 'l') {
       this.cb.onToggleLabels();
-    } else if ((key === 'delete' || key === 'backspace') && p) {
-      this.cb.onDelete(id);
+    } else if (key === 'delete' || key === 'backspace') {
+      // Delete every selected item (whole multi-selection), not just primary.
+      const ids = this.getSelectedIds();
+      if (!ids.length) return;
+      e.preventDefault();
+      for (const delId of ids) this.cb.onDelete(delId);
     }
   }
 
@@ -247,36 +397,67 @@ export class Interaction {
   }
 
   /**
-   * Apply a world-space translation {dx,dy,dz} (feet) to the selected item,
+   * Apply a world-space translation {dx,dy,dz} (feet) to the whole selection,
    * reusing the same validation as dragging: clamp inside the container, reject
-   * (and revert) if the result overlaps another item. Commits + notifies on
-   * success so stats/panels refresh.
+   * (and revert) if the result overlaps a non-selected item. The set moves as
+   * one rigid unit — the delta is clamped so every member stays in-bounds and
+   * the move is all-or-nothing. Commits + notifies on success so stats/panels
+   * refresh.
    */
   nudgeSelected({ dx = 0, dy = 0, dz = 0 } = {}) {
     const scenario = activeScenario();
-    const p = scenario?.placements.find((x) => x.id === this.cb.getSelectedId());
-    if (!p) return;
+    if (!scenario) return;
+    const ids = this.getSelectedIds();
+    const members = ids
+      .map((id) => scenario.placements.find((x) => x.id === id))
+      .filter(Boolean);
+    if (!members.length) return;
 
-    const prev = { x: p.x, y: p.y, z: p.z };
-    p.x += dx;
-    p.y += dy;
-    p.z += dz;
-    this.clampInside(p);
+    const spec = this.cb.getContainerSpec();
+    // Clamp the shared delta so no member leaves the container on any axis,
+    // keeping the group rigid.
+    let cdx = dx;
+    let cdy = dy;
+    let cdz = dz;
+    for (const p of members) {
+      cdx = Math.max(-p.x, Math.min(cdx, spec.length - p.dims.l - p.x));
+      cdz = Math.max(-p.z, Math.min(cdz, spec.width - p.dims.w - p.z));
+      cdy = Math.max(-p.y, Math.min(cdy, spec.height - p.dims.h - p.y));
+    }
 
     // No effective movement (e.g. already flush against a wall): do nothing.
-    if (p.x === prev.x && p.y === prev.y && p.z === prev.z) return;
+    if (cdx === 0 && cdy === 0 && cdz === 0) return;
 
-    if (collidesAny(p, scenario.placements)) {
-      p.x = prev.x;
-      p.y = prev.y;
-      p.z = prev.z;
-      this.sm.upsertPlacement(p, true);
+    const moveSet = new Set(ids);
+    const others = scenario.placements.filter((o) => !moveSet.has(o.id));
+
+    // Apply the delta to a candidate pose for each member, then validate the
+    // whole group against non-selected items.
+    const candidates = members.map((p) => ({
+      id: p.id,
+      catalogItemId: p.catalogItemId,
+      x: p.x + cdx,
+      y: p.y + cdy,
+      z: p.z + cdz,
+      dims: p.dims,
+    }));
+    const blocked = candidates.some((c) => collidesAny(c, others));
+    if (blocked) {
+      // Nothing moved yet (we validated candidates), just warn and refresh.
+      for (let i = 0; i < members.length; i++) this.sm.upsertPlacement(members[i], true);
       toast('Blocked — no room to move there', 'warn');
       return;
     }
 
-    p.layer = p.y <= 1e-6 ? 0 : 1;
-    this.sm.upsertPlacement(p, true);
+    for (let i = 0; i < members.length; i++) {
+      const p = members[i];
+      const c = candidates[i];
+      p.x = c.x;
+      p.y = c.y;
+      p.z = c.z;
+      p.layer = p.y <= 1e-6 ? 0 : 1;
+      this.sm.upsertPlacement(p, true);
+    }
     this.cb.onChange();
   }
 

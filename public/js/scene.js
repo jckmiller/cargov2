@@ -224,11 +224,19 @@ export class SceneManager {
     }
   }
 
-  /** Sync all meshes to a list of placements (add/update/remove). */
-  syncPlacements(placements, selectedId) {
+  /**
+   * Sync all meshes to a list of placements (add/update/remove). `selected`
+   * may be a single placement id, an array of ids, or a Set — every matching
+   * mesh is highlighted so multi-selected items all show as selected.
+   */
+  syncPlacements(placements, selected) {
+    const selectedSet =
+      selected instanceof Set
+        ? selected
+        : new Set(Array.isArray(selected) ? selected : selected ? [selected] : []);
     const seen = new Set();
     for (const p of placements) {
-      this.upsertPlacement(p, p.id === selectedId);
+      this.upsertPlacement(p, selectedSet.has(p.id));
       seen.add(p.id);
     }
     for (const id of [...this.placementMeshes.keys()]) {
