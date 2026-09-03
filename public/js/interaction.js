@@ -161,6 +161,20 @@ export class Interaction {
     const p = scenario?.placements.find((x) => x.id === id);
     const key = e.key.toLowerCase();
 
+    // ---- Fine-tune move: nudge the selected item along the viewer's axes ----
+    // Arrow keys move on the ground plane relative to the current camera view;
+    // PageUp/PageDown move vertically. Default step is 1 inch; hold Alt for a
+    // coarse 6 inch step. Directions are resolved against the live camera so
+    // "left/right/up/down" always match what the user sees on screen.
+    const NUDGE = { arrowleft: 'left', arrowright: 'right', arrowup: 'forward', arrowdown: 'back', pageup: 'up', pagedown: 'down' };
+    if (NUDGE[key]) {
+      if (!p) return;
+      e.preventDefault();
+      const step = (e.altKey ? 6 : 1) / 12; // feet (6" coarse, 1" fine)
+      this.nudgeByView(NUDGE[key], step);
+      return;
+    }
+
     if (key === 'r' && p) {
       this.transformPlacement(p, (d) => ({
         dims: { l: d.w, w: d.l, h: d.h },
@@ -185,6 +199,85 @@ export class Interaction {
     p.x = Math.max(0, Math.min(p.x, spec.length - p.dims.l));
     p.z = Math.max(0, Math.min(p.z, spec.width - p.dims.w));
     if (p.y + p.dims.h > spec.height) p.y = Math.max(0, spec.height - p.dims.h);
+  }
+
+  /**
+   * Resolve the two horizontal container axes ("right" and "forward") as seen
+   * from the live camera. Each is the dominant world axis (±X = length, ±Z =
+   * width) of the camera's screen-right and ground-projected view direction,
+   * so nudging with the arrow keys/pad always tracks what the user sees.
+   * Returns unit deltas: { right:{x,z}, forward:{x,z} }.
+   */
+  viewerAxes() {
+    const cam = this.sm.camera;
+    // Camera-right = first column of the world matrix.
+    const right = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 0);
+    right.y = 0;
+    // Forward = where the camera looks, flattened onto the ground plane.
+    const forward = new THREE.Vector3();
+    cam.getWorldDirection(forward);
+    forward.y = 0;
+
+    const snap = (v, fallback) => {
+      if (v.lengthSq() < 1e-8) return fallback;
+      // Snap to the dominant of the two horizontal axes.
+      return Math.abs(v.x) >= Math.abs(v.z)
+        ? { x: Math.sign(v.x) || 1, z: 0 }
+        : { x: 0, z: Math.sign(v.z) || 1 };
+    };
+    return {
+      right: snap(right, { x: 1, z: 0 }),
+      forward: snap(forward, { x: 0, z: 1 }),
+    };
+  }
+
+  /**
+   * Nudge the selected item by `step` feet in a view-relative direction:
+   * 'right' | 'left' | 'forward' | 'back' | 'up' | 'down'. Horizontal moves use
+   * the camera-aligned axes; up/down use world height and float freely (bounded
+   * only by the container and collisions).
+   */
+  nudgeByView(dir, step) {
+    if (dir === 'up') return this.nudgeSelected({ dy: step });
+    if (dir === 'down') return this.nudgeSelected({ dy: -step });
+    const { right, forward } = this.viewerAxes();
+    const sign = dir === 'left' || dir === 'back' ? -1 : 1;
+    const axis = dir === 'right' || dir === 'left' ? right : forward;
+    this.nudgeSelected({ dx: axis.x * step * sign, dz: axis.z * step * sign });
+  }
+
+  /**
+   * Apply a world-space translation {dx,dy,dz} (feet) to the selected item,
+   * reusing the same validation as dragging: clamp inside the container, reject
+   * (and revert) if the result overlaps another item. Commits + notifies on
+   * success so stats/panels refresh.
+   */
+  nudgeSelected({ dx = 0, dy = 0, dz = 0 } = {}) {
+    const scenario = activeScenario();
+    const p = scenario?.placements.find((x) => x.id === this.cb.getSelectedId());
+    if (!p) return;
+
+    const prev = { x: p.x, y: p.y, z: p.z };
+    p.x += dx;
+    p.y += dy;
+    p.z += dz;
+    this.clampInside(p);
+
+    // No effective movement (e.g. already flush against a wall): do nothing.
+    if (p.x === prev.x && p.y === prev.y && p.z === prev.z) return;
+
+    if (collidesAny(p, scenario.placements)) {
+      p.x = prev.x;
+      p.y = prev.y;
+      p.z = prev.z;
+      this.sm.upsertPlacement(p, true);
+      toast('Blocked — no room to move there', 'warn');
+      return;
+    }
+
+    p.layer = p.y <= 1e-6 ? 0 : 1;
+    this.sm.upsertPlacement(p, true);
+    this.cb.onChange();
   }
 
   /**

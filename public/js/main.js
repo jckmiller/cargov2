@@ -160,7 +160,7 @@ function initScene() {
   });
 
   interaction = new Interaction(sm, {
-    onSelect: (id) => { state.selectedPlacementId = id; sm.syncPlacements(activeScenario().placements, id); },
+    onSelect: (id) => { state.selectedPlacementId = id; sm.syncPlacements(activeScenario().placements, id); updateNudgePad(); },
     onChange: () => { markDirty(); renderStats(activeScenario()); renderScenarios(state.project, state.activeScenarioId, scenarioHandlers()); },
     onEdit: (id) => editPlacement(id),
     onDetails: (id) => showDetails(id),
@@ -193,6 +193,16 @@ function renderAll() {
   renderStats(activeScenario());
   renderStaging(staging, stagingHandlers());
   refreshScene();
+  updateNudgePad();
+}
+
+// Enable the fine-tune "Move" pad only when an item is selected.
+function updateNudgePad() {
+  const pad = document.getElementById('nudge-pad');
+  if (!pad) return;
+  const enabled = !!state.selectedPlacementId;
+  pad.classList.toggle('disabled', !enabled);
+  pad.querySelectorAll('button.nudge').forEach((b) => { b.disabled = !enabled; });
 }
 
 // ---------- Placement helpers ----------
@@ -486,6 +496,16 @@ function wireToolbar() {
   document.getElementById('btn-tip').addEventListener('click', () => interaction.onKey({ key: 't', target: {} }));
   document.getElementById('btn-delete').addEventListener('click', () => {
     if (state.selectedPlacementId) removePlacement(state.selectedPlacementId);
+  });
+
+  // Fine-tune "Move" pad: nudge the selected item along the viewer's axes.
+  // Hold Alt while clicking for a coarse 6" step (matches the arrow-key path).
+  document.querySelectorAll('#nudge-pad button.nudge').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      if (!state.selectedPlacementId) return;
+      const step = (e.altKey ? 6 : 1) / 12; // feet
+      interaction.nudgeByView(btn.dataset.dir, step);
+    });
   });
 
   document.getElementById('btn-loadplan').addEventListener('click', () => {

@@ -99,6 +99,19 @@
             <button id="btn-rotate" class="btn small" title="Rotate 90° (R)">Rotate</button>
             <button id="btn-tip" class="btn small" title="Tip forward (T)">Tip</button>
             <button id="btn-delete" class="btn small danger" title="Delete (Del)">Delete</button>
+            <div id="nudge-pad" class="nudge-pad" title="Fine-tune position — arrow keys move relative to your view (Alt = 6&quot; step)" aria-label="Move selected item">
+              <span class="nudge-title">Move</span>
+              <div class="nudge-grid">
+                <button class="btn small nudge" data-dir="forward" title="Move away (↑)">▲</button>
+                <button class="btn small nudge" data-dir="left" title="Move left (←)">◀</button>
+                <button class="btn small nudge" data-dir="back" title="Move toward (↓)">▼</button>
+                <button class="btn small nudge" data-dir="right" title="Move right (→)">▶</button>
+              </div>
+              <div class="nudge-vert">
+                <button class="btn small nudge" data-dir="up" title="Raise (PageUp)">▲ Up</button>
+                <button class="btn small nudge" data-dir="down" title="Lower (PageDown)">▼ Dn</button>
+              </div>
+            </div>
             <span class="spacer"></span>
             <button id="btn-loadplan" class="btn small">Load Plan</button>
             <button id="btn-manifest" class="btn small">Manifest</button>
@@ -108,8 +121,9 @@
           </div>
           <div id="canvas-container"></div>
           <div id="hint" class="hint">
-            Click select · Drag move (drops to floor) · Shift+Drag stack on item · R rotate · T tip ·
-            E edit · L labels · Dbl-Click details · Del remove · Right-Drag camera · Scroll zoom
+            Click select · Drag move (drops to floor) · Shift+Drag stack on item · Arrows nudge (Alt = 6") ·
+            PgUp/PgDn raise/lower · R rotate · T tip · E edit · L labels · Dbl-Click details · Del remove ·
+            Right-Drag camera · Scroll zoom
           </div>
         </main>
 
