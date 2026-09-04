@@ -10,7 +10,7 @@ export class SceneManager {
     this.el = container;
     this.placementMeshes = new Map(); // placementId -> THREE.Group
     this.labelGroups = new Map(); // placementId -> THREE.Group of sticker meshes
-    this.labelsVisible = false;
+    this.labelsVisible = true;
 
     this.scene = new THREE.Scene();
     this.setThemeBackground();

@@ -15,7 +15,7 @@ export const state = {
   // Multi-selection set. Items here move/nudge/delete together as one unit.
   // Always includes selectedPlacementId when a primary exists.
   selectedPlacementIds: [],
-  labelsVisible: false,
+  labelsVisible: true,
   dirty: false,
 };
 

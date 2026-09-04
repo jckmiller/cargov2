@@ -317,6 +317,15 @@ function removePlacement(id) {
 function toggleLabels() {
   state.labelsVisible = !state.labelsVisible;
   sm.setLabelsVisible(state.labelsVisible);
+  syncLabelsButton();
+}
+
+/** Reflect the current label visibility on the toggle button. */
+function syncLabelsButton() {
+  const btn = document.getElementById('btn-toggle-labels');
+  if (!btn) return;
+  btn.classList.toggle('active', state.labelsVisible);
+  btn.setAttribute('aria-pressed', String(state.labelsVisible));
 }
 
 // ---------- Panel handlers ----------
@@ -508,6 +517,7 @@ function wireToolbar() {
   });
 
   document.getElementById('btn-toggle-labels').addEventListener('click', toggleLabels);
+  syncLabelsButton();
   document.getElementById('btn-rotate').addEventListener('click', () => interaction.onKey({ key: 'r', target: {} }));
   document.getElementById('btn-tip').addEventListener('click', () => interaction.onKey({ key: 't', target: {} }));
   document.getElementById('btn-delete').addEventListener('click', () => {

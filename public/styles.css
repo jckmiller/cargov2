@@ -100,6 +100,12 @@ code { background: var(--panel-2); padding: 1px 6px; border-radius: var(--radius
 }
 .btn:hover { border-color: var(--accent); color: var(--accent); transform: translateY(-1px); box-shadow: var(--shadow-md); }
 .btn:active { transform: translateY(0); box-shadow: var(--shadow-sm); }
+.btn.active {
+  border-color: var(--accent); color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+.btn.active[aria-pressed="true"]:hover { transform: none; }
 .btn.primary {
   background: linear-gradient(180deg, var(--accent), var(--accent-2));
   border-color: var(--accent-2); color: #fff;
