@@ -49,6 +49,7 @@ export const api = {
   listProjects: () => request('GET', '/api/projects'),
   getProject: (id) => request('GET', `/api/projects/${id}`),
   createProject: (p) => request('POST', '/api/projects', p),
+  duplicateProject: (id, body) => request('POST', `/api/projects/${id}/duplicate`, body),
   updateProject: (id, p) => request('PUT', `/api/projects/${id}`, p),
   deleteProject: (id) => request('DELETE', `/api/projects/${id}`),
 

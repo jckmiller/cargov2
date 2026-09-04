@@ -582,6 +582,10 @@ function wireTopbar() {
         setProject(proj); renderAll();
         await saveProject();
       }),
+      onCopy: async (id) => {
+        const { project } = await api.duplicateProject(id);
+        toast(`Copied to "${project.name}"`, 'ok');
+      },
       onImport: async (file) => {
         try { const proj = await importProjectJSON(file); setProject(proj); renderAll(); toast('Imported', 'ok'); }
         catch (e) { toast(e.message, 'error'); }

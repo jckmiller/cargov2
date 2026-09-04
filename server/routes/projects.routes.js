@@ -113,6 +113,33 @@ router.post('/', (req, res) => {
   res.status(201).json({ project: withViewers(p) });
 });
 
+// POST /api/projects/:id/duplicate  { name? }
+// Copies a project the user may read into a new project owned by the copier.
+// The duplicate always starts restricted with no viewers (safe default).
+router.post('/:id/duplicate', (req, res) => {
+  if (!canWrite(req.user.role)) {
+    return res.status(403).json({ error: 'Insufficient permissions' });
+  }
+  const source = db
+    .prepare('SELECT * FROM projects WHERE id = ?')
+    .get(Number(req.params.id));
+  if (!source) return res.status(404).json({ error: 'Project not found' });
+  if (!canReadProject(req.user, source)) {
+    return res.status(403).json({ error: 'Access denied' });
+  }
+  const { name } = req.body || {};
+  const newName = name != null && String(name).trim()
+    ? String(name).trim()
+    : `${source.name} (Copy)`;
+  const info = db
+    .prepare(
+      'INSERT INTO projects (name, owner_id, visibility, data) VALUES (?, ?, ?, ?)'
+    )
+    .run(newName, req.user.id, 'restricted', source.data);
+  const p = db.prepare('SELECT * FROM projects WHERE id = ?').get(info.lastInsertRowid);
+  res.status(201).json({ project: withViewers(p) });
+});
+
 // PUT /api/projects/:id  { name?, visibility?, data?, viewers? }
 router.put('/:id', (req, res) => {
   const id = Number(req.params.id);

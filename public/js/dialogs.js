@@ -29,6 +29,15 @@ export async function projectsDialog(callbacks) {
             `${p.catalogCount} catalog items · ${p.scenarioCount} container loadings · updated ${new Date(p.updated_at + 'Z').toLocaleString()}` }),
           el('div', { class: 'item-actions' }, [
             el('button', { class: 'btn small primary', text: 'Open', onClick: () => { close(); callbacks.onOpen(p.id); } }),
+            callbacks.canWrite
+              ? el('button', { class: 'btn small', text: 'Copy', onClick: async () => {
+                  try {
+                    await callbacks.onCopy(p.id);
+                    close();
+                    projectsDialog(callbacks);
+                  } catch (e) { toast(e.message, 'error'); }
+                } })
+              : null,
             callbacks.canManage
               ? el('button', { class: 'btn small', text: 'Manage', onClick: async () => {
                   try {
