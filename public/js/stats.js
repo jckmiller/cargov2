@@ -218,6 +218,28 @@ function computeBalance({ totalWeight, frontWeight, backWeight, leftWeight, righ
   };
 }
 
+/**
+ * Compute how much room (in feet) is left between a placement and each
+ * container boundary: the two length-axis walls (front/back), the two
+ * width-axis walls (left/right), the floor, and the roof. Values are clamped
+ * to zero so touching/overlapping a boundary reads as "0" rather than a tiny
+ * negative number from floating point drift.
+ */
+export function placementClearances(p, spec) {
+  const d = p.dims || { l: 0, w: 0, h: 0 };
+  const x = p.x || 0;
+  const z = p.z || 0;
+  const y = p.y || 0;
+  return {
+    front: Math.max(0, x),
+    back: Math.max(0, spec.length - (x + (d.l || 0))),
+    left: Math.max(0, z),
+    right: Math.max(0, spec.width - (z + (d.w || 0))),
+    floor: Math.max(0, y),
+    roof: Math.max(0, spec.height - (y + (d.h || 0))),
+  };
+}
+
 export function fmtLb(n) {
   return `${Math.round(n).toLocaleString()} lb`;
 }

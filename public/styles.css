@@ -270,6 +270,21 @@ code { background: var(--panel-2); padding: 1px 6px; border-radius: var(--radius
 
 #canvas-container { flex: 1; position: relative; min-width: 0; min-height: 0; }
 #canvas-container canvas { display: block; width: 100%; height: 100%; }
+#canvas-container.measuring canvas { cursor: crosshair; }
+
+/* Measure tool HUD: floating readout with the running distance + axis
+   breakdown, shown while the Measure tool has an active or finished pick. */
+.measure-readout {
+  position: absolute; top: var(--space-3); left: var(--space-3); z-index: 5;
+  background: var(--panel); border: 1px solid var(--border-strong);
+  border-radius: var(--radius); box-shadow: var(--shadow-md);
+  padding: var(--space-3) var(--space-4); font-size: 0.82rem;
+  min-width: 200px; pointer-events: none;
+}
+.measure-readout .m-total { font-size: 1.05rem; font-weight: 700; color: var(--accent); }
+.measure-readout .m-row { display: flex; justify-content: space-between; gap: var(--space-3); }
+.measure-readout .m-row .k { color: var(--muted); }
+.measure-readout .m-hint { color: var(--muted); font-size: 0.75rem; margin-top: var(--space-1); }
 
 /* Sidebar collapse handles */
 .sidebar-handle {

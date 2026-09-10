@@ -1,8 +1,8 @@
 // Render the left (scenarios/catalog/library), right (stats/staging) panels.
 import { el } from './ui.js';
 import { CATEGORIES, itemColor } from './cargo.js';
-import { getContainer, fmtInches } from './container.js';
-import { scenarioStats, fmtLb, fmtPct, fmtFt3 } from './stats.js';
+import { getContainer, fmtInches, fmtFeet } from './container.js';
+import { scenarioStats, placementClearances, fmtLb, fmtPct, fmtFt3 } from './stats.js';
 import { BUILTIN_GROUPS, loadCustomPresets } from './library.js';
 import { remainingQty } from './store.js';
 
@@ -230,6 +230,35 @@ function renderBalance(host, balance) {
       })
     );
   }
+}
+
+/**
+ * Render the live "Clearances" readout for the current selection: how much
+ * room is left between the item and each container boundary (front/back
+ * walls, left/right walls, floor, roof). Shows a placeholder when nothing —
+ * or more than one item — is selected, since clearances only make sense for
+ * a single item at a time.
+ */
+export function renderClearances(placement, spec) {
+  const host = document.getElementById('clearances-panel');
+  if (!host) return;
+  host.innerHTML = '';
+
+  if (!placement) {
+    host.appendChild(el('p', { class: 'muted small', text: 'Select a single item to see clearances.' }));
+    return;
+  }
+
+  const c = placementClearances(placement, spec);
+  const rowKV = (k, v) =>
+    el('div', { class: 'stat-row' }, [el('span', { class: 'k', text: k }), el('span', { text: v })]);
+
+  host.appendChild(rowKV('To front wall', fmtFeet(c.front)));
+  host.appendChild(rowKV('To back wall', fmtFeet(c.back)));
+  host.appendChild(rowKV('To left wall', fmtFeet(c.left)));
+  host.appendChild(rowKV('To right wall', fmtFeet(c.right)));
+  host.appendChild(rowKV('To floor', fmtFeet(c.floor)));
+  host.appendChild(rowKV('To roof', fmtFeet(c.roof)));
 }
 
 export function renderStaging(staging, handlers) {

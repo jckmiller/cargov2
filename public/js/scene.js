@@ -71,7 +71,19 @@ export class SceneManager {
     // container when the "Pending Items" view is toggled on.
     this.pendingGroup = new THREE.Group();
     this.pendingGroup.visible = false;
-    this.scene.add(this.containerGroup, this.cargoGroup, this.pendingGroup);
+    // Invisible catcher planes at the 6 container boundaries (front/back
+    // walls, left/right walls, floor, roof) so the Measure tool can snap a
+    // click onto "the wall"/"the roof" even where no cargo mesh is present.
+    // Kept invisible (raycasting doesn't require visibility) and repositioned
+    // whenever the container geometry changes in setContainer().
+    this.boundaryGroup = new THREE.Group();
+    this.boundaryGroup.visible = false;
+    // Measurement markers/lines drawn by the Measure tool (see measure.js).
+    this.measureGroup = new THREE.Group();
+    this.scene.add(
+      this.containerGroup, this.cargoGroup, this.pendingGroup,
+      this.boundaryGroup, this.measureGroup
+    );
 
     this._raf = null;
     this._onResize = () => this.resize();
@@ -148,6 +160,41 @@ export class SceneManager {
       this.camera.position.set(L / 2 + L * 0.7, H + L * 0.5, W / 2 + W * 2.2);
       this.controls.update();
     }
+
+    this.rebuildBoundaryPlanes(L, W, H);
+  }
+
+  /**
+   * Build 6 invisible catcher planes at the container's boundaries — front
+   * wall (x=0), back wall (x=L), left wall (z=0), right wall (z=W), floor
+   * (y=0), roof (y=H) — each tagged userData.boundary with a name, so the
+   * Measure tool can raycast onto "the wall"/"the roof" even where no cargo
+   * mesh sits. Rendering stays off (boundaryGroup.visible=false); raycasting
+   * still works on hidden objects.
+   */
+  rebuildBoundaryPlanes(L, W, H) {
+    this.disposeGroupContents(this.boundaryGroup);
+    this.boundaryGroup.clear();
+    const mat = () => new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
+    const addPlane = (name, w, h, position, rotation) => {
+      const geo = new THREE.PlaneGeometry(w, h);
+      const mesh = new THREE.Mesh(geo, mat());
+      mesh.position.copy(position);
+      if (rotation) mesh.rotation.copy(rotation);
+      mesh.userData.boundary = name;
+      this.boundaryGroup.add(mesh);
+    };
+    const rx = (v) => new THREE.Euler(v, 0, 0);
+    const ry = (v) => new THREE.Euler(0, v, 0);
+    // Floor / roof: horizontal planes, spanning L × W.
+    addPlane('floor', L, W, new THREE.Vector3(L / 2, 0, W / 2), rx(-Math.PI / 2));
+    addPlane('roof', L, W, new THREE.Vector3(L / 2, H, W / 2), rx(Math.PI / 2));
+    // Front (x=0) / back (x=L) walls: spanning W × H.
+    addPlane('front', W, H, new THREE.Vector3(0, H / 2, W / 2), ry(Math.PI / 2));
+    addPlane('back', W, H, new THREE.Vector3(L, H / 2, W / 2), ry(-Math.PI / 2));
+    // Left (z=0) / right (z=W) walls: spanning L × H.
+    addPlane('left', L, H, new THREE.Vector3(L / 2, H / 2, 0), null);
+    addPlane('right', L, H, new THREE.Vector3(L / 2, H / 2, W), null);
   }
 
   clearCargo() {
@@ -255,6 +302,45 @@ export class SceneManager {
 
   setPendingVisible(v) {
     this.pendingGroup.visible = v;
+  }
+
+  /** Clear any measurement markers/line drawn by the Measure tool. */
+  clearMeasureVisual() {
+    this.disposeGroupContents(this.measureGroup);
+    this.measureGroup.clear();
+  }
+
+  /**
+   * Draw (or redraw) the current measurement: a small sphere marker at each
+   * given point plus a connecting line. `dashed` renders a dashed preview
+   * line (live drag before the second click is committed); otherwise a
+   * solid line is drawn for the finalized measurement.
+   */
+  drawMeasureVisual(points, { dashed = false, color = 0xffc15c } = {}) {
+    this.clearMeasureVisual();
+    const markerGeo = new THREE.SphereGeometry(0.08, 12, 12);
+    const markerMat = new THREE.MeshBasicMaterial({ color, depthTest: false });
+    for (const pt of points) {
+      const marker = new THREE.Mesh(markerGeo, markerMat);
+      marker.position.copy(pt);
+      marker.renderOrder = 999;
+      this.measureGroup.add(marker);
+    }
+    if (points.length < 2) return;
+    const lineGeo = new THREE.BufferGeometry().setFromPoints(points);
+    let line;
+    if (dashed) {
+      const mat = new THREE.LineDashedMaterial({
+        color, depthTest: false, dashSize: 0.15, gapSize: 0.1, linewidth: 1,
+      });
+      line = new THREE.Line(lineGeo, mat);
+      line.computeLineDistances();
+    } else {
+      const mat = new THREE.LineBasicMaterial({ color, depthTest: false, linewidth: 2 });
+      line = new THREE.Line(lineGeo, mat);
+    }
+    line.renderOrder = 998;
+    this.measureGroup.add(line);
   }
 
   /** Dispose geometry/material/texture for every mesh in a group's subtree. */

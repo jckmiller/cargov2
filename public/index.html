@@ -100,6 +100,7 @@
             <button id="btn-rotate" class="btn small" title="Rotate 90° (R)">Rotate</button>
             <button id="btn-tip" class="btn small" title="Tip forward (T)">Tip</button>
             <button id="btn-delete" class="btn small danger" title="Delete (Del)">Delete</button>
+            <button id="btn-measure" class="btn small" aria-pressed="false" title="Measure distances — click two points (M). Shift = vertical only, Alt = horizontal only, Esc = clear">📏 Measure (M)</button>
             <div id="nudge-pad" class="nudge-pad" title="Fine-tune position — arrow keys move relative to your view (Alt = 6&quot; step)" aria-label="Move selected item">
               <span class="nudge-title">Move</span>
               <div class="nudge-grid">
@@ -121,7 +122,9 @@
             <button id="btn-import-json" class="btn small">Import</button>
             <button id="btn-shortcuts" class="btn small" title="Controls &amp; shortcuts (?)">⌨ Controls</button>
           </div>
-          <div id="canvas-container"></div>
+          <div id="canvas-container">
+            <div id="measure-readout" class="measure-readout hidden"></div>
+          </div>
         </main>
 
         <!-- Right: stats + staging -->
@@ -134,6 +137,16 @@
             </div>
             <div class="panel-body">
               <div id="stats-panel" class="stats"></div>
+            </div>
+          </section>
+          <section class="panel" data-panel="clearances">
+            <div class="panel-head">
+              <button class="collapse-toggle" aria-expanded="true" title="Collapse">
+                <span class="chevron">▾</span><h3>Clearances</h3>
+              </button>
+            </div>
+            <div class="panel-body">
+              <div id="clearances-panel" class="stats"></div>
             </div>
           </section>
           <section class="panel" data-panel="staging">

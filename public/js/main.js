@@ -11,8 +11,9 @@ import { makeCatalogItem, uid, itemColor, findFreePlacement } from './cargo.js';
 import { packAll } from './autoload.js';
 import { presetToCatalogItem, deleteCustomPreset } from './library.js';
 import {
-  renderScenarios, renderCatalog, renderLibrary, renderStats, renderStaging,
+  renderScenarios, renderCatalog, renderLibrary, renderStats, renderStaging, renderClearances,
 } from './panels.js';
+import { MeasureTool } from './measure.js';
 import { el, toast, openModal, confirmDialog, makeCollapsible } from './ui.js';
 import { itemForm, autoloadForm, loadPlanModal, compareModal, catalogImportForm, shortcutsModal } from './forms.js';
 import { projectsDialog, newProjectDialog, usersDialog } from './dialogs.js';
@@ -21,6 +22,7 @@ import { exportProjectJSON, importProjectJSON } from './io.js';
 
 let sm = null; // SceneManager
 let interaction = null;
+let measure = null; // MeasureTool
 const staging = []; // removed placements held aside
 
 // ---------- Theme (defaults to day/light, persisted) ----------
@@ -166,8 +168,14 @@ function initScene() {
       else setSelection(id);
       sm.syncPlacements(activeScenario().placements, state.selectedPlacementIds);
       updateNudgePad();
+      renderClearances(selectedPlacementForClearances(), getContainer(activeScenario().containerType));
     },
-    onChange: () => { markDirty(); renderStats(activeScenario()); renderScenarios(state.project, state.activeScenarioId, scenarioHandlers()); },
+    onChange: () => {
+      markDirty();
+      renderStats(activeScenario());
+      renderScenarios(state.project, state.activeScenarioId, scenarioHandlers());
+      renderClearances(selectedPlacementForClearances(), getContainer(activeScenario().containerType));
+    },
     onEdit: (id) => editPlacement(id),
     onDetails: (id) => showDetails(id),
     onDelete: (id) => removePlacement(id),
@@ -176,7 +184,10 @@ function initScene() {
     getContainerSpec: () => getContainer(activeScenario().containerType),
     getSelectedId: () => state.selectedPlacementId,
     getSelectedIds: () => state.selectedPlacementIds,
+    isMeasuring: () => measure && measure.isActive(),
   });
+
+  measure = new MeasureTool(sm);
 }
 
 function refreshScene() {
@@ -225,9 +236,21 @@ function renderAll() {
   renderCatalog(p, catalogHandlers(), activeScenario());
   renderLibrary(libraryHandlers());
   renderStats(activeScenario());
+  renderClearances(selectedPlacementForClearances(), getContainer(activeScenario().containerType));
   renderStaging(staging, stagingHandlers());
   refreshScene();
   updateNudgePad();
+}
+
+/**
+ * The single selected placement to show in the Clearances panel, or null
+ * when nothing (or more than one item) is selected — clearances only make
+ * sense for one item at a time.
+ */
+function selectedPlacementForClearances() {
+  if (state.selectedPlacementIds.length !== 1) return null;
+  const scn = activeScenario();
+  return scn?.placements.find((p) => p.id === state.selectedPlacementIds[0]) || null;
 }
 
 // Enable the fine-tune "Move" pad only when an item is selected.
@@ -375,6 +398,33 @@ function syncPendingButton() {
   if (!btn) return;
   btn.classList.toggle('active', state.pendingViewVisible);
   btn.setAttribute('aria-pressed', String(state.pendingViewVisible));
+}
+
+/**
+ * Toggle the Measure tool: click two points in the scene (item ↔ wall, item
+ * ↔ roof, or any point A to point B) to read the distance between them.
+ * Suspends normal drag/select interaction while active (see Interaction's
+ * isMeasuring guard) and clears any in-progress selection so the two modes
+ * never fight over the canvas.
+ */
+function toggleMeasureTool() {
+  if (!measure) return;
+  const active = measure.toggle();
+  if (active) {
+    clearSelection();
+    sm.syncPlacements(activeScenario().placements, state.selectedPlacementIds);
+    updateNudgePad();
+    renderClearances(null, getContainer(activeScenario().containerType));
+  }
+  syncMeasureButton(active);
+}
+
+/** Reflect the current Measure tool state on the toggle button. */
+function syncMeasureButton(active) {
+  const btn = document.getElementById('btn-measure');
+  if (!btn) return;
+  btn.classList.toggle('active', active);
+  btn.setAttribute('aria-pressed', String(active));
 }
 
 // ---------- Panel handlers ----------
@@ -575,6 +625,14 @@ function wireToolbar() {
     // Delete the whole selection (a copy — removePlacement mutates the set).
     const ids = [...state.selectedPlacementIds];
     for (const id of ids) removePlacement(id);
+  });
+
+  document.getElementById('btn-measure').addEventListener('click', () => toggleMeasureTool());
+  window.addEventListener('keydown', (e) => {
+    if (e.key.toLowerCase() !== 'm') return;
+    const tag = (e.target && e.target.tagName) || '';
+    if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) || e.target.isContentEditable) return;
+    toggleMeasureTool();
   });
 
   // Fine-tune "Move" pad: nudge the selected item along the viewer's axes.

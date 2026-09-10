@@ -286,6 +286,13 @@ export function shortcutsModal() {
       [['Right-Drag'], 'Orbit camera'],
       [['Scroll'], 'Zoom'],
     ]],
+    ['Measure', [
+      [['M'], 'Toggle the Measure tool'],
+      [['Click', 'Click'], 'Set point A, then point B — reads the distance'],
+      [['Shift', 'Click'], 'Lock B above/below A (vertical only — e.g. item to roof)'],
+      [['Alt', 'Click'], 'Lock B level with A (horizontal only — e.g. item to wall)'],
+      [['Esc'], 'Clear the current measurement'],
+    ]],
   ];
 
   function keyRow([keys, desc]) {

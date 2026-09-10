@@ -50,6 +50,7 @@ export class Interaction {
   }
 
   onDown(e) {
+    if (this.cb.isMeasuring && this.cb.isMeasuring()) return; // Measure tool owns the canvas
     if (e.button !== 0 || e.ctrlKey || e.metaKey) return; // plain left = drag; Ctrl/Cmd+left = orbit
     this.setPointer(e);
     const group = this.pickPlacement();
@@ -294,6 +295,7 @@ export class Interaction {
   }
 
   onDblClick(e) {
+    if (this.cb.isMeasuring && this.cb.isMeasuring()) return; // Measure tool owns the canvas
     this.setPointer(e);
     const group = this.pickPlacement();
     if (group) this.cb.onDetails(group.userData.placementId);
@@ -302,6 +304,7 @@ export class Interaction {
   onKey(e) {
     const tag = (e.target && e.target.tagName) || '';
     if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tag)) return;
+    if (this.cb.isMeasuring && this.cb.isMeasuring()) return; // Measure tool owns keyboard shortcuts
     const scenario = activeScenario();
     const id = this.cb.getSelectedId();
     const p = scenario?.placements.find((x) => x.id === id);
