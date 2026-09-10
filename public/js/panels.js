@@ -161,9 +161,13 @@ function renderBalance(host, balance) {
   // height scaled to that bin's share of the heaviest bin, so the weight
   // profile is shown incrementally across the deck. Color: green when
   // balanced, amber near the threshold, red when unbalanced.
-  const balanceRow = (label, axis, negLabel, posLabel, negPct, posPct, orientation = 'horizontal') => {
+  const balanceRow = (label, axis, negLabel, posLabel, negPct, posPct, orientation = 'horizontal', badSide = null) => {
     const near = balance.threshold - 5;
-    const cls = axis.over ? 'over' : axis.heavierPct >= near ? 'warn' : '';
+    // When a `badSide` is given (floor/roof axis), only warn/flag when that
+    // specific side is the heavier one — a low center of gravity (weight
+    // toward the floor) is desirable for stability and should read as fine.
+    const nearThreshold = axis.heavierPct >= near && (!badSide || axis.heavierSide === badSide);
+    const cls = axis.over ? 'over' : nearThreshold ? 'warn' : '';
     const bins = axis.bins || [];
     const maxBin = Math.max(0, ...bins);
     // Center-of-gravity marker position along the bar (0% = neg end, 100% =
@@ -236,7 +240,8 @@ function renderBalance(host, balance) {
         { text: 'Roof', side: 'roof' },
         balance.height.floorPct,
         balance.height.roofPct,
-        'vertical'
+        'vertical',
+        'roof'
       )
     );
   }

@@ -188,7 +188,12 @@ function computeBalance({
   const toPctBins = (bins) =>
     hasWeight ? bins.map((w) => (w / totalWeight) * 100) : bins.map(() => 0);
 
-  const axis = (aWeight, bWeight, cogSum, dimension, negSide, posSide) => {
+  // `badSide`, when given, restricts the "unbalanced" flag to only trigger
+  // when that specific side is the heavier one. This is used for the
+  // floor/roof axis: a low center of gravity (weight concentrated toward the
+  // floor) is desirable for stability, so it should never be flagged — only
+  // a roof-heavy (top-heavy) load is a real problem.
+  const axis = (aWeight, bWeight, cogSum, dimension, negSide, posSide, badSide = null) => {
     if (!hasWeight) {
       return {
         aPct: 50, bPct: 50, heavierPct: 50,
@@ -202,16 +207,18 @@ function computeBalance({
     // CoG relative to center, normalized to [-1, 1] then to %.
     const cog = cogSum / totalWeight;         // in feet from the 0 end
     const cogOffsetPct = dimension ? ((cog - dimension / 2) / (dimension / 2)) * 100 : 0;
+    const exceedsThreshold = heavierPct > BALANCE_THRESHOLD;
     return {
       aPct, bPct, heavierPct, heavierSide,
       cogOffsetPct,
-      over: heavierPct > BALANCE_THRESHOLD,
+      over: badSide ? (heavierSide === badSide && exceedsThreshold) : exceedsThreshold,
     };
   };
 
   const lengthAxis = axis(frontWeight, backWeight, cogXSum, length, 'front', 'back');
   const widthAxis = axis(leftWeight, rightWeight, cogZSum, width, 'left', 'right');
-  const heightAxis = axis(floorWeight, roofWeight, cogYSum, height, 'floor', 'roof');
+  // Floor-heavy is good, not bad — only flag when the roof side is heavier.
+  const heightAxis = axis(floorWeight, roofWeight, cogYSum, height, 'floor', 'roof', 'roof');
 
   return {
     threshold: BALANCE_THRESHOLD,
