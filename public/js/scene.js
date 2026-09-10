@@ -29,27 +29,39 @@ export class SceneManager {
     this.renderer.setSize(rect.width, rect.height);
     this.el.appendChild(this.renderer.domElement);
 
-    // Orbit with Ctrl/Cmd + left-drag; plain left-drag stays free for cargo.
-    // LEFT is assigned ROTATE on the fly (see the pointerdown handler below)
-    // only while Ctrl or Cmd is held, so it works across Windows/Linux/Mac.
+    // Orbit with Ctrl/Cmd + left-drag; pan (move the pivot/target) with
+    // Shift+Ctrl/Cmd + left-drag; plain left-drag stays free for cargo.
+    // LEFT is assigned on the fly (see the pointerdown handler below) only
+    // while Ctrl or Cmd is held, so it works across Windows/Linux/Mac.
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
-    this.controls.enablePan = false; // drags orbit around center; never pan the view
+    this.controls.enablePan = true; // needed for Shift+Ctrl/Cmd pivot pan below
     this.controls.mouseButtons = {
       LEFT: null,
       MIDDLE: THREE.MOUSE.DOLLY,
       RIGHT: null,
     };
 
-    // Decide orbit-vs-drag on pointerdown, before OrbitControls reads the map.
-    // Capture phase guarantees this runs ahead of OrbitControls' own listener.
+    // Decide orbit-vs-pan-vs-drag on pointerdown, before OrbitControls reads
+    // the map. Capture phase guarantees this runs ahead of OrbitControls' own
+    // listener.
+    //
+    // OrbitControls swaps ROTATE<->PAN internally whenever ctrl/meta/shift is
+    // held on mousedown. Since our modifiers below always hold ctrl/meta, that
+    // swap always fires exactly once, so we get the *opposite* of whatever we
+    // assign here:
+    //   Ctrl/Cmd only        -> assign PAN    -> library flips to ROTATE (orbit)
+    //   Ctrl/Cmd + Shift     -> assign ROTATE -> library flips to PAN (move pivot)
     this._onPointerDownCapture = (e) => {
-      const orbitModifier = e.button === 0 && (e.ctrlKey || e.metaKey);
-      // OrbitControls swaps ROTATE<->PAN internally when ctrl/meta/shift is held.
-      // Our orbit modifier is always held here, so map LEFT to PAN and let that
-      // swap turn it into an orbit (ROTATE) around the target (container center).
-      this.controls.mouseButtons.LEFT = orbitModifier ? THREE.MOUSE.PAN : null;
+      const hasCtrlOrMeta = e.button === 0 && (e.ctrlKey || e.metaKey);
+      const panModifier = hasCtrlOrMeta && e.shiftKey; // Shift+Ctrl/Cmd: move pivot
+      const orbitModifier = hasCtrlOrMeta && !e.shiftKey; // Ctrl/Cmd only: orbit
+      this.controls.mouseButtons.LEFT = panModifier
+        ? THREE.MOUSE.ROTATE
+        : orbitModifier
+          ? THREE.MOUSE.PAN
+          : null;
     };
     this.renderer.domElement.addEventListener(
       'pointerdown', this._onPointerDownCapture, { capture: true }

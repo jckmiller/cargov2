@@ -284,7 +284,8 @@ export function shortcutsModal() {
       [['L'], 'Toggle labels'],
       [['P'], 'Toggle Pending Items (staged beside container)'],
       [['G'], 'Toggle 1" snap-to-grid'],
-      [['Right-Drag'], 'Orbit camera'],
+      [['Ctrl/Cmd', 'Drag'], 'Orbit camera'],
+      [['Shift', 'Ctrl/Cmd', 'Drag'], 'Pan view / move the pivot'],
       [['Scroll'], 'Zoom'],
     ]],
     ['Measure', [
