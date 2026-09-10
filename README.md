@@ -57,6 +57,7 @@ the database is empty and `ADMIN_PASSWORD` is not provided.
   20' Standard (47,900 lb), 40' Standard (58,860 lb), 40' High Cube (58,860 lb),
   40' Side-Load (8' high, 52,910 lb).
 - Drag & drop that drops items to the floor by default; hold **Shift** to stack an item on top of another (stacking rules enforced).
+- **Snap-to-grid (`G`):** drags and nudges snap to a 1" grid by default so items align precisely; toggle on/off from the toolbar or the `G` key (persisted).
 - Rotate 90° (`R`, swaps L/W) or tip forward (`T`, swaps L/H).
 - 3D item tags/labels (`L`), dark/light theme toggle.
 

@@ -115,6 +115,23 @@ export function itemVolumeFt3(item) {
 
 export const COLLISION_EPS = 1e-6;
 
+// ---------------------------------------------------------------------------
+// Snap-to-grid (viewer)
+//
+// The 3D viewer's floor grid is drawn at 1-foot cells (cosmetic), but drag and
+// nudge snapping uses a finer 1-inch grid so items can be aligned precisely
+// without being restricted to whole-foot positions. All scene units are feet,
+// so 1 inch is 1/12 ft.
+// ---------------------------------------------------------------------------
+
+export const GRID_SIZE_FT = 1 / 12; // 1 inch, in feet
+
+/** Snap a single coordinate (feet) to the nearest multiple of `size` (feet). */
+export function snapToGrid(value, size = GRID_SIZE_FT) {
+  if (!size) return value;
+  return Math.round(value / size) * size;
+}
+
 /** True if two boxes overlap on the XZ (floor) footprint. */
 export function overlapsXZ(a, b, eps = COLLISION_EPS) {
   return (

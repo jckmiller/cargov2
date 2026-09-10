@@ -40,6 +40,14 @@ function initTheme() {
 // Apply persisted theme before login so the whole app matches immediately.
 initTheme();
 
+// ---------- Snap-to-grid (1", persisted) ----------
+const SNAP_KEY = 'a3_snap_grid';
+function initSnapToGrid() {
+  const saved = localStorage.getItem(SNAP_KEY);
+  state.snapToGridEnabled = saved == null ? true : saved === '1';
+}
+initSnapToGrid();
+
 // ---------- Auth ----------
 const loginOverlay = document.getElementById('login-overlay');
 const appEl = document.getElementById('app');
@@ -181,9 +189,11 @@ function initScene() {
     onDelete: (id) => removePlacement(id),
     onToggleLabels: () => toggleLabels(),
     onTogglePending: () => togglePendingView(),
+    onToggleSnap: () => toggleSnapToGrid(),
     getContainerSpec: () => getContainer(activeScenario().containerType),
     getSelectedId: () => state.selectedPlacementId,
     getSelectedIds: () => state.selectedPlacementIds,
+    getSnapEnabled: () => state.snapToGridEnabled,
     isMeasuring: () => measure && measure.isActive(),
   });
 
@@ -376,6 +386,26 @@ function syncLabelsButton() {
   if (!btn) return;
   btn.classList.toggle('active', state.labelsVisible);
   btn.setAttribute('aria-pressed', String(state.labelsVisible));
+}
+
+/**
+ * Toggle snap-to-grid: while on, dragging or nudging an item rounds its
+ * position to the nearest 1" cell (see cargo.js GRID_SIZE_FT). Persisted
+ * across sessions like the theme preference.
+ */
+function toggleSnapToGrid() {
+  state.snapToGridEnabled = !state.snapToGridEnabled;
+  localStorage.setItem(SNAP_KEY, state.snapToGridEnabled ? '1' : '0');
+  syncSnapButton();
+  toast(`Snap to grid ${state.snapToGridEnabled ? 'on' : 'off'}`, 'ok');
+}
+
+/** Reflect the current snap-to-grid state on the toggle button. */
+function syncSnapButton() {
+  const btn = document.getElementById('btn-toggle-snap');
+  if (!btn) return;
+  btn.classList.toggle('active', state.snapToGridEnabled);
+  btn.setAttribute('aria-pressed', String(state.snapToGridEnabled));
 }
 
 /**
@@ -619,6 +649,8 @@ function wireToolbar() {
   syncLabelsButton();
   document.getElementById('btn-toggle-pending').addEventListener('click', togglePendingView);
   syncPendingButton();
+  document.getElementById('btn-toggle-snap').addEventListener('click', toggleSnapToGrid);
+  syncSnapButton();
   document.getElementById('btn-rotate').addEventListener('click', () => interaction.onKey({ key: 'r', target: {} }));
   document.getElementById('btn-tip').addEventListener('click', () => interaction.onKey({ key: 't', target: {} }));
   document.getElementById('btn-delete').addEventListener('click', () => {

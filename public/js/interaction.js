@@ -10,14 +10,15 @@
 // the primary (last-clicked) item.
 import * as THREE from 'three';
 import { activeScenario, catalogItem } from './store.js';
-import { collidesAny, restingY } from './cargo.js';
+import { collidesAny, restingY, snapToGrid } from './cargo.js';
 import { toast } from './ui.js';
 
 export class Interaction {
   constructor(sceneMgr, callbacks) {
     this.sm = sceneMgr;
     // callbacks: { onSelect(id,{toggle}), onChange, onEdit, onDetails, onDelete,
-    //   onToggleLabels, getContainerSpec, getSelectedId, getSelectedIds }
+    //   onToggleLabels, onTogglePending, onToggleSnap, getContainerSpec,
+    //   getSelectedId, getSelectedIds, getSnapEnabled }
     this.cb = callbacks;
     this.raycaster = new THREE.Raycaster();
     this.pointer = new THREE.Vector2();
@@ -156,6 +157,11 @@ export class Interaction {
     }
   }
 
+  /** True when the caller has snap-to-grid enabled (defaults on if unset). */
+  snapEnabled() {
+    return !this.cb.getSnapEnabled || this.cb.getSnapEnabled() !== false;
+  }
+
   /** Single-item drag: floor by default, Shift settles on supports beneath. */
   moveSingle(hit) {
     const d = this.dragging.members[0];
@@ -163,6 +169,12 @@ export class Interaction {
     const spec = this.cb.getContainerSpec();
     let nx = hit.x - d.offset.x;
     let nz = hit.z - d.offset.z;
+    // Snap to the 1" viewer grid before clamping, so a snapped cell right at
+    // the container edge still gets pulled back inside.
+    if (this.snapEnabled()) {
+      nx = snapToGrid(nx);
+      nz = snapToGrid(nz);
+    }
     // Clamp inside container footprint.
     nx = Math.max(0, Math.min(nx, spec.length - p.dims.l));
     nz = Math.max(0, Math.min(nz, spec.width - p.dims.w));
@@ -215,6 +227,14 @@ export class Interaction {
     // group stays rigid.
     let dx = hit.x - this.dragging.anchor.x;
     let dz = hit.z - this.dragging.anchor.z;
+    // Snap the shared delta so every member's resulting position lands on
+    // the 1" grid (relative to the primary member's last valid pose) while
+    // the whole group stays rigid.
+    if (this.snapEnabled()) {
+      const primary = members[0].lastValid;
+      dx = snapToGrid(primary.x + dx) - primary.x;
+      dz = snapToGrid(primary.z + dz) - primary.z;
+    }
     for (const m of members) {
       const p = m.placement;
       const base = m.lastValid; // translate relative to the last valid pose
@@ -340,6 +360,8 @@ export class Interaction {
       this.cb.onToggleLabels();
     } else if (key === 'p') {
       this.cb.onTogglePending();
+    } else if (key === 'g') {
+      this.cb.onToggleSnap();
     } else if (key === 'delete' || key === 'backspace') {
       // Delete every selected item (whole multi-selection), not just primary.
       const ids = this.getSelectedIds();

@@ -20,6 +20,8 @@ export const state = {
   // the user can preview what's next to load. An item drops out of this
   // layout the moment a unit of it is placed into the active container.
   pendingViewVisible: false,
+  // Snap dragged/nudged items to the 1" viewer grid (see cargo.js GRID_SIZE_FT).
+  snapToGridEnabled: true,
   dirty: false,
 };
 

@@ -268,7 +268,7 @@ export function shortcutsModal() {
       [['Dbl-Click'], 'Open item details'],
     ]],
     ['Move', [
-      [['Drag'], 'Move item (drops to floor)'],
+      [['Drag'], 'Move item (drops to floor, snaps to 1" grid)'],
       [['Shift', 'Drag'], 'Stack on the item below'],
       [['Drag'], 'Move whole selection as one group'],
       [['←', '↑', '↓', '→'], 'Nudge (hold Alt for a 6" step)'],
@@ -283,6 +283,7 @@ export function shortcutsModal() {
     ['View', [
       [['L'], 'Toggle labels'],
       [['P'], 'Toggle Pending Items (staged beside container)'],
+      [['G'], 'Toggle 1" snap-to-grid'],
       [['Right-Drag'], 'Orbit camera'],
       [['Scroll'], 'Zoom'],
     ]],
