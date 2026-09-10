@@ -201,16 +201,20 @@ export function restingY(x, z, dims, placements, spec, topItem, baseLookup, skip
     restY = nextTop;
   }
   if (restY + dims.h > spec.height + COLLISION_EPS) return null; // exceeds container
-  // Legal-support check: an elevated item must rest on a base that stacking
-  // rules allow (not e.g. on fragile or a stackOn/stackUnder mismatch).
+  // Legal-support + "no overhang" check: an elevated item must rest fully on
+  // base(s) that stacking rules allow (not e.g. on fragile, or a hazmat
+  // mismatch) AND those legal bases must cover the item's ENTIRE footprint.
+  // Partial support (overhang) is never allowed: a stable container requires
+  // every stacked item's full base to be carried by what is beneath it, with
+  // no part left hanging over open air.
   if (restY > COLLISION_EPS && topItem) {
-    const supported = overlapping.some((b) => {
+    const matched = overlapping.filter((b) => {
       const top = b.y + b.dims.h;
       if (Math.abs(top - restY) > Math.max(1e-4, COLLISION_EPS)) return false;
       const base = (baseLookup && baseLookup(b)) || b;
       return canStack(topItem, base);
     });
-    if (!supported) return null;
+    if (!matched.length || !isFullySupported(probe, matched)) return null;
   }
   return restY;
 }
@@ -218,6 +222,46 @@ export function restingY(x, z, dims, placements, spec, topItem, baseLookup, skip
 /** Half-open Y interval intersection: [a0,a1) vs [b0,b1). */
 function ySpanIntersects(a0, a1, b0, b1) {
   return a0 < b1 - COLLISION_EPS && a1 > b0 + COLLISION_EPS;
+}
+
+/**
+ * "No overhang" support check: true when `box`'s XZ footprint is fully
+ * covered by the union of `supports`' XZ footprints (each support exposing a
+ * min-corner {x,z} and {dims:{l,w}}). Implemented via iterative axis-aligned
+ * rectangle subtraction: start with the box's footprint as a single
+ * "uncovered" piece, carve out each support's footprint from every remaining
+ * piece, and check whether anything more than a sliver of floating-point
+ * noise is left uncovered.
+ */
+function isFullySupported(box, supports) {
+  let pieces = [{ x0: box.x, x1: box.x + box.dims.l, z0: box.z, z1: box.z + box.dims.w }];
+  for (const s of supports) {
+    if (!pieces.length) break;
+    const rect = { x0: s.x, x1: s.x + s.dims.l, z0: s.z, z1: s.z + s.dims.w };
+    const next = [];
+    for (const p of pieces) next.push(...subtractRect(p, rect));
+    pieces = next;
+  }
+  const leftoverArea = pieces.reduce(
+    (sum, p) => sum + Math.max(0, p.x1 - p.x0) * Math.max(0, p.z1 - p.z0),
+    0
+  );
+  return leftoverArea <= 1e-4; // tolerate only floating-point noise, not real overhang
+}
+
+/** Axis-aligned rectangle difference: the piece(s) of `p` not covered by `s`. */
+function subtractRect(p, s) {
+  const ix0 = Math.max(p.x0, s.x0);
+  const ix1 = Math.min(p.x1, s.x1);
+  const iz0 = Math.max(p.z0, s.z0);
+  const iz1 = Math.min(p.z1, s.z1);
+  if (ix0 >= ix1 - COLLISION_EPS || iz0 >= iz1 - COLLISION_EPS) return [p]; // no overlap
+  const out = [];
+  if (p.z0 < iz0 - COLLISION_EPS) out.push({ x0: p.x0, x1: p.x1, z0: p.z0, z1: iz0 }); // strip before
+  if (p.z1 > iz1 + COLLISION_EPS) out.push({ x0: p.x0, x1: p.x1, z0: iz1, z1: p.z1 }); // strip after
+  if (p.x0 < ix0 - COLLISION_EPS) out.push({ x0: p.x0, x1: ix0, z0: iz0, z1: iz1 }); // left of overlap
+  if (p.x1 > ix1 + COLLISION_EPS) out.push({ x0: ix1, x1: p.x1, z0: iz0, z1: iz1 }); // right of overlap
+  return out;
 }
 
 /**

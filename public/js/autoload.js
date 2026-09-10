@@ -9,7 +9,7 @@
 
 import { getContainer } from './container.js';
 import {
-  canStack, hazmatIncompatible, uid, itemColor, overlaps3D,
+  canStack, hazmatIncompatible, uid, itemColor, overlaps3D, restingY,
 } from './cargo.js';
 
 const EPS = 1e-6;
@@ -94,12 +94,10 @@ function packInto(units, spec, options = {}) {
   let totalWeight = 0;
   let step = 0;
 
-  let layerBaseY = 0; // bottom of current layer
-  let layerHeight = 0; // tallest item in current layer
   let cursorX = 0; // along length
   let cursorZ = 0; // along width
   let rowDepth = 0; // deepest (width) item in current row
-  let currentLayer = 0;
+  let currentLayer = 0; // nominal shelf pass, used for hazmat segregation grouping
 
   function startNewRow() {
     cursorX = 0;
@@ -107,8 +105,6 @@ function packInto(units, spec, options = {}) {
     rowDepth = 0;
   }
   function startNewLayer() {
-    layerBaseY += layerHeight;
-    layerHeight = 0;
     cursorX = 0;
     cursorZ = 0;
     rowDepth = 0;
@@ -128,10 +124,9 @@ function packInto(units, spec, options = {}) {
 
     for (let attempt = 0; attempt < 3 && !placed; attempt++) {
       for (const o of oris) {
-        const fitsHeight = layerBaseY + o.h <= spec.height + EPS;
         const fitsLength = cursorX + o.l <= spec.length + EPS;
         const fitsWidth = cursorZ + o.w <= spec.width + EPS;
-        if (!fitsHeight || !fitsLength || !fitsWidth) continue;
+        if (!fitsLength || !fitsWidth) continue;
 
         // Hazmat segregation within a layer.
         const conflict = placements.some(
@@ -141,21 +136,23 @@ function packInto(units, spec, options = {}) {
         );
         if (conflict && options.segregateHazmat !== false) continue;
 
-        // Stacking rules when above the floor.
-        if (currentLayer > 0) {
-          const below = placements.find(
-            (p) =>
-              p.layer === currentLayer - 1 &&
-              intersectsXZ(p, cursorX, cursorZ, o.l, o.w)
-          );
-          if (below && !canStack(unit, below.__item)) continue;
-        }
+        // Resolve the item's actual resting height against whatever is
+        // physically beneath its footprint (never a flat, guessed layer
+        // plane) — this is what keeps items from hovering over gaps. It also
+        // enforces the "no overhang" policy: `restingY` only returns a
+        // height when the entire footprint at that height is carried by
+        // legal, rule-compatible bases (see cargo.js).
+        const y = restingY(
+          cursorX, cursorZ, { l: o.l, w: o.w, h: o.h },
+          placements, spec, unit, (p) => p.__item
+        );
+        if (y == null) continue;
 
         // Final overlap guard: never emit a placement that intersects an
         // already-placed item, even if per-axis fit checks rounded favorably.
         const candidate = {
           x: cursorX,
-          y: layerBaseY,
+          y,
           z: cursorZ,
           dims: { l: o.l, w: o.w, h: o.h },
         };
@@ -170,7 +167,7 @@ function packInto(units, spec, options = {}) {
           weight: unit.weight,
           color: itemColor(unit),
           x: cursorX,
-          y: layerBaseY,
+          y,
           z: cursorZ,
           dims: { l: o.l, w: o.w, h: o.h },
           rot: { rot: o.rot || 0, tipped: !!o.tipped },
@@ -181,7 +178,6 @@ function packInto(units, spec, options = {}) {
         totalWeight += unit.weight;
         cursorX += o.l;
         rowDepth = Math.max(rowDepth, o.w);
-        layerHeight = Math.max(layerHeight, o.h);
         step += 1;
         plan.push({
           step,
@@ -189,7 +185,7 @@ function packInto(units, spec, options = {}) {
             `Place ${unit.name} (${unit.weight} lb) on layer ${currentLayer + 1}` +
             (o.rot ? ' [rotated]' : '') +
             (o.tipped ? ' [tipped]' : ''),
-          note: currentLayer === 0 ? 'floor / heaviest-first' : 'stacked (rules ok)',
+          note: y <= EPS ? 'floor / heaviest-first' : 'stacked (no overhang, rules ok)',
         });
         placed = true;
         break;
@@ -423,21 +419,24 @@ function slotAccepts(slot, unit, placements) {
   );
   if (hazConflict) return false;
 
-  // Stacking rules for anything resting above the floor.
-  if (slot.layer > 0) {
-    const below = placements.find(
+  // Stacking rules for anything resting above the floor. A slot can be
+  // carried by more than one base (multi-support), so every base under its
+  // footprint — not just the first match — must accept `unit` on top.
+  if (slot.y > EPS) {
+    const below = placements.filter(
       (p) =>
-        p.layer === slot.layer - 1 &&
+        p !== slot &&
+        Math.abs(p.y + p.dims.h - slot.y) <= Math.max(1e-4, EPS) &&
         intersectsXZ(p, slot.x, slot.z, slot.dims.l, slot.dims.w)
     );
-    if (below && !canStack(unit, below.__item)) return false;
+    if (!below.every((p) => canStack(unit, p.__item))) return false;
   }
 
   // Anything resting on this slot must still be allowed to sit on `unit`.
   const above = placements.filter(
     (p) =>
       p !== slot &&
-      p.layer === slot.layer + 1 &&
+      Math.abs(slot.y + slot.dims.h - p.y) <= Math.max(1e-4, EPS) &&
       intersectsXZ(p, slot.x, slot.z, slot.dims.l, slot.dims.w)
   );
   return above.every((p) => canStack(p.__item, unit));
