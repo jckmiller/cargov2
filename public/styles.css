@@ -362,6 +362,31 @@ kbd {
   background: var(--text); transform: translateX(-1px);
   transition: left 0.35s var(--ease);
 }
+/* Vertical (Floor/Roof) orientation: bins stack bottom (floor) → top (roof),
+   each cell's fill grows in width instead of height, and the CoG marker is a
+   horizontal line positioned by distance from the bottom rather than a
+   vertical line positioned by distance from the left. */
+.balance-hist.vertical {
+  flex-direction: column-reverse; align-items: stretch;
+  width: 44px; height: 90px; margin: 0 auto;
+}
+.balance-hist.vertical > .cell {
+  flex: 1 1 0; height: auto; width: 100%;
+  display: flex; align-items: center; justify-content: flex-start;
+}
+.balance-hist.vertical > .cell > .cell-fill {
+  width: 0; height: 100%; min-width: 1px; min-height: 0;
+  transition: width 0.35s var(--ease), background 0.35s var(--ease);
+}
+.balance-hist.vertical::before {
+  top: 50%; bottom: auto; left: -1px; right: -1px; width: auto; height: 1px;
+  transform: translateY(-0.5px);
+}
+.balance-hist.vertical > .cog-marker {
+  top: auto; bottom: 0%; left: -1px; right: -1px; width: auto; height: 2px;
+  transform: translateY(1px);
+  transition: bottom 0.35s var(--ease);
+}
 .balance-labels {
   display: flex; justify-content: space-between; gap: var(--space-2);
   font-size: 0.72rem; color: var(--muted);

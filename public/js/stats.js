@@ -17,6 +17,7 @@ export const BALANCE_THRESHOLD = 60;
 // because the container is much longer than it is wide.
 export const BALANCE_BINS_LENGTH = 16;
 export const BALANCE_BINS_WIDTH = 6;
+export const BALANCE_BINS_HEIGHT = 8;
 
 /**
  * Distribute a weight spanning [start, end] (in feet) across `binCount` equal
@@ -88,14 +89,18 @@ export function scenarioStats(scenario) {
   let backWeight = 0;  // portion toward the back half  (x >= length/2)
   let leftWeight = 0;  // portion toward the left half  (z < width/2)
   let rightWeight = 0; // portion toward the right half (z >= width/2)
+  let floorWeight = 0; // portion toward the lower half  (y < height/2)
+  let roofWeight = 0;  // portion toward the upper half  (y >= height/2)
   let cogXSum = 0;     // Σ(weight · centerX)
   let cogZSum = 0;     // Σ(weight · centerZ)
+  let cogYSum = 0;     // Σ(weight · centerY)
 
   // Incremental weight profile: weight spread across floor segments in
   // proportion to each item's footprint overlap, so the distribution reflects
   // where mass physically sits rather than snapping into halves.
   const lengthBins = new Array(BALANCE_BINS_LENGTH).fill(0);
   const widthBins = new Array(BALANCE_BINS_WIDTH).fill(0);
+  const heightBins = new Array(BALANCE_BINS_HEIGHT).fill(0);
 
   for (const p of placements) {
     const w = p.weight || 0;
@@ -108,6 +113,7 @@ export function scenarioStats(scenario) {
     // Positions are stored as the min corner, in feet.
     const x0 = p.x || 0;
     const z0 = p.z || 0;
+    const y0 = p.y || 0;
 
     // Half-weight totals use the same proportional-overlap model as the
     // histogram bins: an item straddling the centerline contributes to both
@@ -121,25 +127,31 @@ export function scenarioStats(scenario) {
     const widthSplit = splitAtMid(z0, z0 + (d.w || 0), spec.width, w);
     leftWeight += widthSplit.neg;
     rightWeight += widthSplit.pos;
+    const heightSplit = splitAtMid(y0, y0 + (d.h || 0), spec.height, w);
+    floorWeight += heightSplit.neg;
+    roofWeight += heightSplit.pos;
 
     // Center of gravity uses each item's center (min corner + half-dimension).
     const cx = x0 + (d.l || 0) / 2;
     const cz = z0 + (d.w || 0) / 2;
+    const cy = y0 + (d.h || 0) / 2;
     cogXSum += w * cx;
     cogZSum += w * cz;
+    cogYSum += w * cy;
 
     // Spread this item's weight across the bins its footprint spans.
     distributeToBins(lengthBins, x0, x0 + (d.l || 0), spec.length, w, BALANCE_BINS_LENGTH);
     distributeToBins(widthBins, z0, z0 + (d.w || 0), spec.width, w, BALANCE_BINS_WIDTH);
+    distributeToBins(heightBins, y0, y0 + (d.h || 0), spec.height, w, BALANCE_BINS_HEIGHT);
   }
 
   const containerVolume = spec.length * spec.width * spec.height;
   const balance = computeBalance({
     totalWeight,
-    frontWeight, backWeight, leftWeight, rightWeight,
-    cogXSum, cogZSum,
-    lengthBins, widthBins,
-    length: spec.length, width: spec.width,
+    frontWeight, backWeight, leftWeight, rightWeight, floorWeight, roofWeight,
+    cogXSum, cogZSum, cogYSum,
+    lengthBins, widthBins, heightBins,
+    length: spec.length, width: spec.width, height: spec.height,
   });
 
   return {
@@ -163,7 +175,13 @@ export function scenarioStats(scenario) {
  * cogOffsetPct is the signed CoG distance from center as a % of the dimension:
  * positive = toward back (length) / right (width), negative = front / left.
  */
-function computeBalance({ totalWeight, frontWeight, backWeight, leftWeight, rightWeight, cogXSum, cogZSum, lengthBins, widthBins, length, width }) {
+function computeBalance({
+  totalWeight,
+  frontWeight, backWeight, leftWeight, rightWeight, floorWeight, roofWeight,
+  cogXSum, cogZSum, cogYSum,
+  lengthBins, widthBins, heightBins,
+  length, width, height,
+}) {
   const hasWeight = totalWeight > 0;
 
   // Per-bin weight as a % of the total load, front→back / left→right.
@@ -193,6 +211,7 @@ function computeBalance({ totalWeight, frontWeight, backWeight, leftWeight, righ
 
   const lengthAxis = axis(frontWeight, backWeight, cogXSum, length, 'front', 'back');
   const widthAxis = axis(leftWeight, rightWeight, cogZSum, width, 'left', 'right');
+  const heightAxis = axis(floorWeight, roofWeight, cogYSum, height, 'floor', 'roof');
 
   return {
     threshold: BALANCE_THRESHOLD,
@@ -214,6 +233,15 @@ function computeBalance({ totalWeight, frontWeight, backWeight, leftWeight, righ
       cogOffsetPct: widthAxis.cogOffsetPct,
       over: widthAxis.over,
       bins: toPctBins(widthBins),
+    },
+    height: {
+      floorPct: heightAxis.aPct,
+      roofPct: heightAxis.bPct,
+      heavierPct: heightAxis.heavierPct,
+      heavierSide: heightAxis.heavierSide,
+      cogOffsetPct: heightAxis.cogOffsetPct,
+      over: heightAxis.over,
+      bins: toPctBins(heightBins),
     },
   };
 }

@@ -161,7 +161,7 @@ function renderBalance(host, balance) {
   // height scaled to that bin's share of the heaviest bin, so the weight
   // profile is shown incrementally across the deck. Color: green when
   // balanced, amber near the threshold, red when unbalanced.
-  const balanceRow = (label, axis, negLabel, posLabel, negPct, posPct) => {
+  const balanceRow = (label, axis, negLabel, posLabel, negPct, posPct, orientation = 'horizontal') => {
     const near = balance.threshold - 5;
     const cls = axis.over ? 'over' : axis.heavierPct >= near ? 'warn' : '';
     const bins = axis.bins || [];
@@ -169,18 +169,24 @@ function renderBalance(host, balance) {
     // Center-of-gravity marker position along the bar (0% = neg end, 100% =
     // pos end). cogOffsetPct is signed [-100..100] from center.
     const cogMarkerPct = Math.min(100, Math.max(0, 50 + axis.cogOffsetPct / 2));
+    const isVertical = orientation === 'vertical';
     const cells = bins.map((pct) => {
-      const h = maxBin > 0 ? (pct / maxBin) * 100 : 0;
+      const fillPct = maxBin > 0 ? (pct / maxBin) * 100 : 0;
+      const fillStyle = isVertical ? `width:${fillPct}%;` : `height:${fillPct}%;`;
       return el('span', {
         class: 'cell',
         title: `${pct.toFixed(1)}% of load`,
-      }, [el('span', { class: 'cell-fill', style: `height:${h}%;` })]);
+      }, [el('span', { class: 'cell-fill', style: fillStyle })]);
     });
     const cog = axis.cogOffsetPct;
     const cogWhich = cog === 0 ? '' : (cog > 0 ? posLabel.text : negLabel.text);
     const cogText = Math.abs(cog) < 0.05
       ? 'CoG centered'
       : `CoG ${Math.abs(cog).toFixed(1)}% ${cogWhich}`;
+    // For the vertical (floor/roof) axis, the marker is a horizontal line
+    // positioned by distance from the bottom instead of a vertical line
+    // positioned by distance from the left.
+    const markerStyle = isVertical ? `bottom:${cogMarkerPct}%;` : `left:${cogMarkerPct}%;`;
 
     return el('div', { class: 'balance-item' }, [
       el('div', { class: 'stat-row' }, [
@@ -189,9 +195,9 @@ function renderBalance(host, balance) {
           text: `${negPct.toFixed(0)}% / ${posPct.toFixed(0)}%`,
         }),
       ]),
-      el('div', { class: `balance-hist ${cls}` }, [
+      el('div', { class: `balance-hist ${isVertical ? 'vertical' : ''} ${cls}` }, [
         ...cells,
-        el('span', { class: 'cog-marker', style: `left:${cogMarkerPct}%;` }),
+        el('span', { class: 'cog-marker', style: markerStyle }),
       ]),
       el('div', { class: 'balance-labels' }, [
         el('span', { text: negLabel.text }),
@@ -221,6 +227,19 @@ function renderBalance(host, balance) {
       balance.width.rightPct
     )
   );
+  if (balance.height) {
+    host.appendChild(
+      balanceRow(
+        'Floor / Roof',
+        balance.height,
+        { text: 'Floor', side: 'floor' },
+        { text: 'Roof', side: 'roof' },
+        balance.height.floorPct,
+        balance.height.roofPct,
+        'vertical'
+      )
+    );
+  }
 
   const problems = [];
   if (balance.length.over) {
@@ -228,6 +247,9 @@ function renderBalance(host, balance) {
   }
   if (balance.width.over) {
     problems.push(`${balance.width.heavierPct.toFixed(0)}% ${balance.width.heavierSide}`);
+  }
+  if (balance.height && balance.height.over) {
+    problems.push(`${balance.height.heavierPct.toFixed(0)}% ${balance.height.heavierSide}`);
   }
   if (problems.length) {
     host.appendChild(
