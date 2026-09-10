@@ -35,6 +35,7 @@ export function itemForm(existing, onSave) {
     weight: el('input', { type: 'number', step: '1', value: item.weight }),
     qty: el('input', { type: 'number', step: '1', min: '0', value: item.qtyAvailable }),
   };
+  const noTip = el('input', { type: 'checkbox', ...(item.noTip ? { checked: '' } : {}) });
   const savePreset = el('input', { type: 'checkbox' });
 
   openModal((close) => {
@@ -52,6 +53,7 @@ export function itemForm(existing, onSave) {
         stackOn: item.stackOn,
         stackUnder: item.stackUnder,
         color: item.color,
+        noTip: noTip.checked,
       });
       if (savePreset.checked) {
         saveCustomPreset(out);
@@ -70,6 +72,7 @@ export function itemForm(existing, onSave) {
         el('label', {}, ['Height (in)', f.height]),
         el('label', {}, ['Weight (lb)', f.weight]),
         el('label', {}, ['Qty Available', f.qty]),
+        el('label', { class: 'full-col inline' }, [noTip, ' Do not tip (cannot be laid on its side)']),
         el('label', { class: 'full-col inline' }, [savePreset, ' Save as reusable custom preset']),
       ]),
       el('div', { class: 'modal-actions' }, [
@@ -128,7 +131,8 @@ export function catalogImportForm(onImport) {
             class: 'muted small full-col',
             text:
               'Upload a CSV to populate the Item Catalog. Columns (case-insensitive): name, ' +
-              'category, hazmatClass, length, width, height, weight, qty (optional). ' +
+              'category, hazmatClass, length, width, height, weight, qty (optional), ' +
+              'noTip (optional — yes/true/1 to prevent tipping). ' +
               'Dimensions are in inches; weight is in pounds.',
           }),
           el('p', {

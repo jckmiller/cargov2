@@ -43,6 +43,7 @@ export function saveCustomPreset(item) {
     stackOn: item.stackOn,
     stackUnder: item.stackUnder,
     color: item.color,
+    noTip: item.noTip,
   });
   localStorage.setItem(CUSTOM_KEY, JSON.stringify(list));
 }

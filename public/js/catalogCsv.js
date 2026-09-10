@@ -14,15 +14,16 @@ const COLUMN_MAP = {
   height: ['height', 'h'],
   weight: ['weight', 'lb', 'lbs'],
   qty: ['qty', 'quantity', 'count'],
+  noTip: ['notip', 'donottip', 'no_tip'],
 };
 
-const SAMPLE_HEADER = ['name', 'category', 'hazmatClass', 'length', 'width', 'height', 'weight', 'qty'];
+const SAMPLE_HEADER = ['name', 'category', 'hazmatClass', 'length', 'width', 'height', 'weight', 'qty', 'noTip'];
 const SAMPLE_ROWS = [
-  ['Packaging Crate', 'general', '', 48, 42, 42, 850, 4],
-  ['Generator Set', 'heavy', '', 90, 48, 54, 3200, 2],
-  ['Glass Panels', 'fragile', '', 72, 36, 24, 260, 6],
-  ['Solvent Drums', 'hazardous', '3', 30, 30, 40, 480, 3],
-  ['Fresh Produce Totes', 'perishable', '', 24, 18, 12, 45, 10],
+  ['Packaging Crate', 'general', '', 48, 42, 42, 850, 4, ''],
+  ['Generator Set', 'heavy', '', 90, 48, 54, 3200, 2, 'yes'],
+  ['Glass Panels', 'fragile', '', 72, 36, 24, 260, 6, 'yes'],
+  ['Solvent Drums', 'hazardous', '3', 30, 30, 40, 480, 3, ''],
+  ['Fresh Produce Totes', 'perishable', '', 24, 18, 12, 45, 10, ''],
 ];
 
 function normalizeHeader(h) {
@@ -87,6 +88,7 @@ export function downloadSampleCatalogCSV() {
     '# Dimensions: length / width / height in inches',
     '# Weight: pounds',
     '# Qty: optional — defaults to 1',
+    '# noTip: optional — yes/true/1 to prevent tipping this item onto its side',
   ];
   const lines = [
     ...guide,
@@ -165,6 +167,8 @@ export function parseCatalogCsv(text) {
     const category = enumOf(row, 'category', CATEGORIES) || 'general';
     const hazmatClass = enumOf(row, 'hazmatClass', HAZMAT_CLASSES) || 'none';
     const qtyRaw = fieldOf(row, 'qty');
+    const noTipRaw = fieldOf(row, 'noTip');
+    const noTip = noTipRaw != null && /^(y|yes|true|1)$/i.test(String(noTipRaw).trim());
 
     items.push(makeCatalogItem({
       name,
@@ -175,6 +179,7 @@ export function parseCatalogCsv(text) {
       height: heightIn != null ? heightIn / 12 : undefined,
       weight: weight != null ? weight : undefined,
       qtyAvailable: qtyRaw != null && qtyRaw !== '' ? Math.max(0, Math.floor(Number(qtyRaw) || 1)) : undefined,
+      noTip,
     }));
   }
 

@@ -7,7 +7,7 @@ import {
 import { SceneManager } from './scene.js';
 import { Interaction } from './interaction.js';
 import { getContainer, CONTAINER_TYPES } from './container.js';
-import { makeCatalogItem, uid, itemColor, findFreePlacement } from './cargo.js';
+import { makeCatalogItem, uid, itemColor, findFreePlacementAnyOrientation } from './cargo.js';
 import { packAll } from './autoload.js';
 import { presetToCatalogItem, deleteCustomPreset } from './library.js';
 import {
@@ -298,7 +298,8 @@ function addPlacementFromCatalog(catId) {
     layer: 0,
   };
   // Find the first non-overlapping resting spot instead of a fixed offset.
-  const spot = findFreePlacement(scn.placements, spec, p.dims, {
+  // If it doesn't fit as-is, retry rotated/tipped orientations before giving up.
+  const spot = findFreePlacementAnyOrientation(scn.placements, spec, p.dims, {
     item,
     baseLookup: (o) => catalogItem(o.catalogItemId),
   });
@@ -307,6 +308,7 @@ function addPlacementFromCatalog(catId) {
     return;
   }
   p.x = spot.x; p.y = spot.y; p.z = spot.z; p.layer = spot.layer;
+  p.dims = spot.dims; p.rot = spot.rot;
   scn.placements.push(p);
   // The staged item is tied to the catalog: placing it again clears any staged
   // copies. Match on catalogItemId; fall back to name for entries that lack it
@@ -535,7 +537,8 @@ function stagingHandlers() {
         toast(`No units of "${p.name}" left in the shipment inventory`, 'warn');
         return;
       }
-      const spot = findFreePlacement(scn.placements, spec, p.dims, {
+      // If it doesn't fit as-is, retry rotated/tipped orientations before giving up.
+      const spot = findFreePlacementAnyOrientation(scn.placements, spec, p.dims, {
         item: catalogItem(p.catalogItemId) || p,
         baseLookup: (o) => catalogItem(o.catalogItemId),
       });
@@ -546,6 +549,7 @@ function stagingHandlers() {
       staging.splice(i, 1);
       p.id = uid('pl');
       p.x = spot.x; p.y = spot.y; p.z = spot.z; p.layer = spot.layer;
+      p.dims = spot.dims; p.rot = spot.rot;
       scn.placements.push(p);
       markDirty(); renderAll();
     },

@@ -78,6 +78,10 @@ export function makeCatalogItem(partial = {}) {
     stackOn: partial.stackOn || ['general', 'heavy'],
     stackUnder: partial.stackUnder || ['general', 'fragile', 'perishable'],
     color: partial.color || null,
+    // "Do not tip": when true, this item may still be rotated 90° (L/W swap)
+    // but must never be tipped onto its side (L/H swap) — manual tip (T),
+    // auto-load, and the "Place" rotate-retry fallback all honor this.
+    noTip: !!partial.noTip,
   };
 }
 
@@ -257,4 +261,50 @@ export function findFreePlacement(placements, spec, dims, options = {}) {
   };
 
   return scan(false) || scan(true);
+}
+
+/**
+ * Candidate orientations for a box of `dims` (feet), each describing a
+ * rotate/tip transform relative to the original: rotating 90° (R) swaps
+ * length/width, and tipping (T) swaps length/height. Mirrors the orientation
+ * set used by the auto-load packer (see autoload.js `orientations`) so manual
+ * "Place" placement can retry the same set of physical orientations.
+ */
+export function placementOrientations(dims, options = {}) {
+  const variants = [
+    { l: dims.l, w: dims.w, h: dims.h, rot: 0, tipped: false },
+    { l: dims.w, w: dims.l, h: dims.h, rot: 90, tipped: false }, // R
+  ];
+  // Respect the catalog item's "do not tip" flag: skip the tip (L/H swap)
+  // orientation entirely for items that can't safely be placed on their side.
+  if (!options.noTip) {
+    variants.push({ l: dims.h, w: dims.w, h: dims.l, rot: 0, tipped: true }); // T
+  }
+  const seen = new Set();
+  return variants.filter((v) => {
+    const key = `${v.l.toFixed(4)}x${v.w.toFixed(4)}x${v.h.toFixed(4)}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/**
+ * Like `findFreePlacement`, but when the item does not fit (or has no room)
+ * in its current orientation, automatically retries with the item rotated
+ * (swap L/W) and tipped (swap L/H) — the same physical orientations the
+ * auto-load packer considers — before giving up. Returns the resting spot
+ * plus the `dims`/`rot` that worked, or null if no orientation fits.
+ *
+ * @returns {{x:number, y:number, z:number, layer:number, dims:object, rot:{rot:number, tipped:boolean}}|null}
+ */
+export function findFreePlacementAnyOrientation(placements, spec, dims, options = {}) {
+  const noTip = !!(options.noTip ?? options.item?.noTip);
+  for (const o of placementOrientations(dims, { noTip })) {
+    const spot = findFreePlacement(placements, spec, { l: o.l, w: o.w, h: o.h }, options);
+    if (spot) {
+      return { ...spot, dims: { l: o.l, w: o.w, h: o.h }, rot: { rot: o.rot, tipped: o.tipped } };
+    }
+  }
+  return null;
 }

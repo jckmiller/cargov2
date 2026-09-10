@@ -350,10 +350,17 @@ export class Interaction {
         rot: { ...(p.rot || {}), rot: ((p.rot?.rot || 0) + 90) % 360 },
       }), 'rotate');
     } else if (key === 't' && p) {
-      this.transformPlacement(p, (d) => ({
-        dims: { l: d.h, w: d.w, h: d.l },
-        rot: { ...(p.rot || {}), tipped: !p.rot?.tipped },
-      }), 'tip');
+      // Respect the catalog item's "do not tip" flag: never allow laying it
+      // on its side, whether tipping in or reverting back to upright.
+      const base = catalogItem(p.catalogItemId);
+      if (base?.noTip && !p.rot?.tipped) {
+        toast(`"${p.name}" is marked do-not-tip and cannot be laid on its side`, 'warn');
+      } else {
+        this.transformPlacement(p, (d) => ({
+          dims: { l: d.h, w: d.w, h: d.l },
+          rot: { ...(p.rot || {}), tipped: !p.rot?.tipped },
+        }), 'tip');
+      }
     } else if (key === 'e' && p) {
       this.cb.onEdit(id);
     } else if (key === 'l') {

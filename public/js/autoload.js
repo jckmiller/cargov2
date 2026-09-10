@@ -26,14 +26,20 @@ function expandUnits(catalog) {
   return units;
 }
 
-/** Candidate orientations for an item, honoring R (swap L/W) and T (tip L/H). */
+/**
+ * Candidate orientations for an item, honoring R (swap L/W) and T (tip L/H).
+ * Items flagged `noTip` in the catalog never get the tipped (L/H swap)
+ * variant, since laying them on their side isn't physically safe.
+ */
 function orientations(item) {
   const base = { l: item.length, w: item.width, h: item.height };
   const variants = [
     { l: base.l, w: base.w, h: base.h, rot: 0 },
     { l: base.w, w: base.l, h: base.h, rot: 90 }, // R
-    { l: base.h, w: base.w, h: base.l, rot: 0, tipped: true }, // T
   ];
+  if (!item.noTip) {
+    variants.push({ l: base.h, w: base.w, h: base.l, rot: 0, tipped: true }); // T
+  }
   const seen = new Set();
   return variants.filter((v) => {
     const key = `${v.l.toFixed(3)}x${v.w.toFixed(3)}x${v.h.toFixed(3)}`;

@@ -54,6 +54,14 @@ export function renderCatalog(project, handlers, activeScenario) {
         el('div', { class: 'row' }, [
           el('span', { class: 'title', text: it.name }),
           el('span', { class: 'chip', style: `background:${itemColor(it)}`, text: chipText }),
+          it.noTip
+            ? el('span', {
+                class: 'chip',
+                style: 'background:var(--warn)',
+                title: 'Cannot be tipped onto its side',
+                text: '⚠ No Tip',
+              })
+            : null,
         ]),
         el('div', { class: 'sub', text:
           `${CATEGORIES[it.category]?.label || it.category} · ${fmtInches(it.length)}×${fmtInches(it.width)}×${fmtInches(it.height)} · ${Math.round(it.weight)} lb` }),
