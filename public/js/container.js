@@ -37,6 +37,17 @@ export const CONTAINER_TYPES = {
     payloadLb: 58860,
     tareLb: 8747,
   },
+  '40SL': {
+    id: '40SL',
+    name: "40' Side-Load",
+    // Standard 40' footprint (same L x W as 40' Standard / High Cube), 8'0" internal height
+    // Internal ~ 39'5" L x 7'8" W x 8'0" H
+    length: ftIn(39, 5.5),
+    width: ftIn(7, 8.5),
+    height: ftIn(8, 0),
+    payloadLb: 52910,
+    tareLb: 14290,
+  },
 };
 
 export function getContainer(id) {
