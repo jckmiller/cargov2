@@ -5,7 +5,7 @@ import { CONTAINER_TYPES, getContainer } from './container.js';
 import { STRATEGIES, DEFAULT_MAX_CONTAINERS } from './autoload.js';
 import { scenarioStats, fmtLb, fmtPct, fmtFt3 } from './stats.js';
 import { saveCustomPreset } from './library.js';
-import { loadPlanHTML, reportDocument, printLoadPlan } from './reporting.js';
+import { loadPlanHTML, manifestHTML, reportDocument, printLoadPlan, printManifest } from './reporting.js';
 import { parseCatalogCsv, downloadSampleCatalogCSV } from './catalogCsv.js';
 
 function option(value, label, selected) {
@@ -221,12 +221,62 @@ export function autoloadForm(currentContainer, onGenerate) {
   );
 }
 
-/** Load plan modal: branded preview (isolated iframe) + print. */
-export function loadPlanModal(scenario, project, user, views) {
+// Checkbox options for the container-view picker shared by the Load Plan
+// and Manifest report modals. 'current' captures the live interactive
+// camera's present orbit/zoom, exactly as the user last left it.
+const VIEW_OPTIONS = [
+  { key: 'iso', label: 'Isometric' },
+  { key: 'current', label: 'Current View' },
+  { key: 'side', label: 'Side' },
+  { key: 'front', label: 'Front' },
+  { key: 'top', label: 'Top' },
+];
+
+/**
+ * Build a row of view-selection inputs. `initial` is the set of keys
+ * pre-checked; `onChange(selectedKeys)` fires whenever the selection
+ * changes. `single` (radio semantics) restricts the picker to exactly one
+ * selected view at a time — used by the Manifest modal, which only ever
+ * shows one container image.
+ */
+function viewPicker(initial, onChange, { single = false } = {}) {
+  const selected = new Set(initial);
+  const groupName = single ? `view-picker-${Math.random().toString(36).slice(2)}` : null;
+  const boxes = VIEW_OPTIONS.map(({ key, label }) => {
+    const cb = el('input', single
+      ? { type: 'radio', name: groupName }
+      : { type: 'checkbox' });
+    cb.checked = selected.has(key);
+    cb.addEventListener('change', () => {
+      if (single) {
+        selected.clear();
+        if (cb.checked) selected.add(key);
+      } else if (cb.checked) {
+        selected.add(key);
+      } else {
+        selected.delete(key);
+      }
+      onChange([...selected]);
+    });
+    return el('label', { class: 'inline view-picker-option' }, [cb, ' ', label]);
+  });
+  return el('div', { class: 'view-picker' }, boxes);
+}
+
+/**
+ * Load plan modal: branded preview (isolated iframe) + print.
+ * `capture(list)` re-renders the requested container views (e.g. from the
+ * live SceneManager) and returns a { [viewKey]: dataUrl } map; the modal
+ * calls it whenever the user changes the view selection so the preview and
+ * final print always reflect the chosen viewpoint(s).
+ */
+export function loadPlanModal(scenario, project, user, capture, initialViews = ['iso', 'side', 'front', 'top']) {
   const preview = el('iframe', {
     class: 'report-preview',
     title: 'Load Plan preview',
   });
+  let views = capture(initialViews);
+
   // Render the exact branded document into an isolated frame so the print
   // styles don't leak into (or inherit from) the app theme.
   const load = () => {
@@ -241,7 +291,15 @@ export function loadPlanModal(scenario, project, user, views) {
   openModal((close) => {
     // Kick off the write once the frame is in the DOM.
     setTimeout(load, 0);
+    const picker = viewPicker(initialViews, (keys) => {
+      views = capture(keys);
+      load();
+    });
     return el('div', { class: 'report-modal' }, [
+      el('div', {}, [
+        el('div', { class: 'muted small', style: 'margin-bottom:4px', text: 'Container views to include:' }),
+        picker,
+      ]),
       preview,
       el('div', { class: 'modal-actions' }, [
         el('button', { class: 'btn', text: 'Close', onClick: close }),
@@ -253,6 +311,54 @@ export function loadPlanModal(scenario, project, user, views) {
       ]),
     ]);
   }, { title: 'Load Plan' });
+}
+
+/**
+ * Manifest modal: same branded-preview pattern as loadPlanModal, but the
+ * manifest report shows a single container view (defaults to Isometric).
+ * `capture(list)` behaves the same as in loadPlanModal.
+ */
+export function manifestModal(project, scenario, user, capture, initialView = 'iso') {
+  const preview = el('iframe', {
+    class: 'report-preview',
+    title: 'Packing Manifest preview',
+  });
+  let viewKey = initialView;
+  let image = capture([viewKey])[viewKey];
+
+  const load = () => {
+    const doc = preview.contentDocument;
+    if (!doc) return;
+    doc.open();
+    doc.write(reportDocument('Packing Manifest', manifestHTML(project, scenario, user, image, viewKey)));
+    doc.close();
+  };
+  preview.addEventListener('load', load);
+
+  openModal((close) => {
+    setTimeout(load, 0);
+    const picker = viewPicker([initialView], (keys) => {
+      const key = keys[0] || null;
+      viewKey = key;
+      image = key ? capture([key])[key] : null;
+      load();
+    }, { single: true });
+    return el('div', { class: 'report-modal' }, [
+      el('div', {}, [
+        el('div', { class: 'muted small', style: 'margin-bottom:4px', text: 'Container view to include:' }),
+        picker,
+      ]),
+      preview,
+      el('div', { class: 'modal-actions' }, [
+        el('button', { class: 'btn', text: 'Close', onClick: close }),
+        el('button', {
+          class: 'btn primary',
+          text: 'Print',
+          onClick: () => printManifest(project, scenario, user, image, viewKey),
+        }),
+      ]),
+    ]);
+  }, { title: 'Packing Manifest' });
 }
 
 /**

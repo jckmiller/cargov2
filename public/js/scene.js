@@ -484,19 +484,50 @@ export class SceneManager {
     return cam;
   }
 
-  /** Build the angled isometric perspective camera used for report snapshots. */
+  /**
+   * Build the angled isometric perspective camera used for report snapshots.
+   * Distance is derived from the container's bounding sphere and the
+   * camera's vertical/horizontal FOV (fit-contain, with margin) so the whole
+   * container — plus label stickers that project slightly past its faces —
+   * is always fully visible and centered, regardless of container
+   * proportions (e.g. 20' vs 40' vs high-cube) or the capture canvas's
+   * aspect ratio. This mirrors the fit-contain approach already used by
+   * makeOrthoCamera() for the elevation/plan views.
+   */
   makeIsoCamera(L, W, H) {
-    const cam = new THREE.PerspectiveCamera(50, this.canvasAspect(), 0.1, 5000);
+    const fovDeg = 50;
+    const aspect = this.canvasAspect();
+    const cam = new THREE.PerspectiveCamera(fovDeg, aspect, 0.1, 5000);
     cam.up.set(0, 1, 0);
-    cam.position.set(L / 2 + L * 0.7, H + L * 0.5, W / 2 + W * 2.2);
-    cam.lookAt(L / 2, H / 2, W / 2);
+
+    const target = new THREE.Vector3(L / 2, H / 2, W / 2);
+    // Bounding sphere radius that fully encloses the container volume (plus
+    // a little slack for label stickers projecting past the box faces).
+    const radius = Math.sqrt(L * L + W * W + H * H) / 2;
+    const margin = 1.18; // breathing room, matching makeOrthoCamera's spirit
+
+    const vFov = THREE.MathUtils.degToRad(fovDeg);
+    const hFov = 2 * Math.atan(Math.tan(vFov / 2) * aspect);
+    // Distance required to fit the sphere within each axis of the frustum;
+    // take the larger so both dimensions clear fully (no cropping).
+    const distV = radius / Math.sin(vFov / 2);
+    const distH = radius / Math.sin(hFov / 2);
+    const distance = Math.max(distV, distH) * margin;
+
+    // Elevated three-quarter viewing direction (front-right-above), kept
+    // consistent regardless of container size.
+    const dir = new THREE.Vector3(0.62, 0.55, 0.86).normalize();
+    cam.position.copy(target).addScaledVector(dir, distance);
+    cam.lookAt(target);
     cam.updateProjectionMatrix();
     return cam;
   }
 
   /**
    * Capture one or more report views. Returns a map keyed by view name with
-   * PNG data URLs. Views: 'iso', 'side', 'front', 'top'.
+   * PNG data URLs. Views: 'iso', 'side', 'front', 'top', 'current' (the
+   * live interactive camera's present orbit/zoom, exactly as the user last
+   * left it — lets the user pick their own viewpoint for print-outs).
    * Options: { labels } temporarily forces label stickers visible.
    */
   captureViews(list = ['iso', 'side', 'front', 'top'], { labels = false } = {}) {
@@ -534,6 +565,8 @@ export class SceneManager {
         target,
         new THREE.Vector3(0, 0, -1)
       ),
+      // The user's own live orbit-camera angle/zoom, captured as-is.
+      current: () => this.camera,
     };
 
     const out = {};

@@ -124,8 +124,11 @@ function statCards(cards) {
  */
 function viewsFigure(views, only) {
   if (!views) return '';
-  const labels = { iso: 'Isometric', side: 'Side View', front: 'Front View', top: 'Top View' };
-  const keys = (only || ['iso', 'side', 'front', 'top']).filter((k) => views[k]);
+  const labels = {
+    iso: 'Isometric', side: 'Side View', front: 'Front View', top: 'Top View',
+    current: 'Custom View',
+  };
+  const keys = (only || ['iso', 'side', 'front', 'top', 'current']).filter((k) => views[k]);
   if (!keys.length) return '';
   const figs = keys
     .map(
@@ -304,7 +307,7 @@ function openPrintWindow(docTitle, bodyHtml) {
 // Manifest
 // ---------------------------------------------------------------------------
 
-export function manifestHTML(project, scenario, user, isoImage) {
+export function manifestHTML(project, scenario, user, viewImage, viewKey = 'iso') {
   const st = scenarioStats(scenario);
   const spec = st.container;
 
@@ -381,9 +384,9 @@ export function manifestHTML(project, scenario, user, isoImage) {
     ])}
     ${cards}
     ${st.overweight ? `<p class="rp-note">${pill('Over payload limit', 'danger')} Total weight exceeds the container payload rating.</p>` : ''}
-    ${isoImage ? `<h2 class="rp-section-title">Container View</h2>
-    ${viewsFigure({ iso: isoImage }, ['iso'])}
-    <p class="rp-note">Isometric view of the loaded container with item labels.</p>` : ''}
+    ${viewImage ? `<h2 class="rp-section-title">Container View</h2>
+    ${viewsFigure({ [viewKey]: viewImage }, [viewKey])}
+    <p class="rp-note">View of the loaded container with item labels.</p>` : ''}
     <h2 class="rp-section-title">Category Breakdown</h2>
     ${categoryChips}
     <h2 class="rp-section-title">Weight Distribution</h2>
@@ -412,8 +415,8 @@ function balanceSummary(balance) {
   <p class="rp-note">Guideline: no single half should carry more than ${balance.threshold}% of total cargo weight.</p>`;
 }
 
-export function printManifest(project, scenario, user, isoImage) {
-  openPrintWindow('Packing Manifest', manifestHTML(project, scenario, user, isoImage));
+export function printManifest(project, scenario, user, viewImage, viewKey = 'iso') {
+  openPrintWindow('Packing Manifest', manifestHTML(project, scenario, user, viewImage, viewKey));
 }
 
 

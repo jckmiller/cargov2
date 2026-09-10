@@ -15,9 +15,9 @@ import {
 } from './panels.js';
 import { MeasureTool } from './measure.js';
 import { el, toast, openModal, confirmDialog, makeCollapsible } from './ui.js';
-import { itemForm, autoloadForm, loadPlanModal, compareModal, catalogImportForm, shortcutsModal } from './forms.js';
+import { itemForm, autoloadForm, loadPlanModal, manifestModal, compareModal, catalogImportForm, shortcutsModal } from './forms.js';
 import { projectsDialog, newProjectDialog, usersDialog } from './dialogs.js';
-import { printManifest, downloadPNG } from './reporting.js';
+import { downloadPNG } from './reporting.js';
 import { exportProjectJSON, importProjectJSON } from './io.js';
 
 let sm = null; // SceneManager
@@ -677,13 +677,17 @@ function wireToolbar() {
     });
   });
 
+  // `capture` re-renders whichever view keys are requested on demand (e.g.
+  // when the user changes the view picker inside the report modal), always
+  // from the live SceneManager so the printout reflects the current
+  // container/labels — including 'current', the user's live orbit angle.
+  const captureReportViews = (list) => sm.captureViews(list, { labels: true });
+
   document.getElementById('btn-loadplan').addEventListener('click', () => {
-    const views = sm.captureViews(['iso', 'side', 'front', 'top'], { labels: true });
-    loadPlanModal(activeScenario(), state.project, state.user, views);
+    loadPlanModal(activeScenario(), state.project, state.user, captureReportViews);
   });
   document.getElementById('btn-manifest').addEventListener('click', () => {
-    const iso = sm.captureViews(['iso'], { labels: true }).iso;
-    printManifest(state.project, activeScenario(), state.user, iso);
+    manifestModal(state.project, activeScenario(), state.user, captureReportViews);
   });
   document.getElementById('btn-export-png').addEventListener('click', () => {
     downloadPNG(sm.exportPNG(), `${state.project.name}-${activeScenario().name}.png`);

@@ -451,6 +451,8 @@ kbd {
   width: 100%; height: min(70vh, 780px); border: 1px solid var(--border);
   border-radius: var(--radius); background: #fff; box-shadow: var(--shadow-sm);
 }
+.view-picker { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-bottom: var(--space-2); }
+.view-picker-option { display: inline-flex; align-items: center; gap: 4px; font-size: 0.85rem; }
 
 /* Printouts (Manifest & Load Plan) open in a dedicated window and carry their
    own self-contained stylesheet, so no app-level @media print rules are needed. */
