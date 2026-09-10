@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { getContainer } from './container.js';
-import { makeLabelMeshes } from './labels.js';
+import { makeLabelMeshes, makeTagSprite } from './labels.js';
 
 export class SceneManager {
   constructor(container) {
@@ -67,7 +67,11 @@ export class SceneManager {
 
     this.containerGroup = new THREE.Group();
     this.cargoGroup = new THREE.Group();
-    this.scene.add(this.containerGroup, this.cargoGroup);
+    // Staging layout for remaining (unplaced) catalog items, shown beside the
+    // container when the "Pending Items" view is toggled on.
+    this.pendingGroup = new THREE.Group();
+    this.pendingGroup.visible = false;
+    this.scene.add(this.containerGroup, this.cargoGroup, this.pendingGroup);
 
     this._raf = null;
     this._onResize = () => this.resize();
@@ -247,6 +251,80 @@ export class SceneManager {
   setLabelsVisible(v) {
     this.labelsVisible = v;
     for (const lg of this.labelGroups.values()) lg.visible = v;
+  }
+
+  setPendingVisible(v) {
+    this.pendingGroup.visible = v;
+  }
+
+  /** Dispose geometry/material/texture for every mesh in a group's subtree. */
+  disposeGroupContents(group) {
+    group.traverse((obj) => {
+      if (obj.geometry) obj.geometry.dispose();
+      if (obj.material) {
+        if (obj.material.map) obj.material.map.dispose();
+        obj.material.dispose();
+      }
+    });
+  }
+
+  /**
+   * Lay out one box per remaining (unplaced) catalog unit in a grid beside
+   * the container, so the user can preview what's next to load. `items` is
+   * an array of { name, dims:{l,w,h}, color } — one entry per unplaced unit.
+   * As soon as a unit gets placed it should be omitted from `items` by the
+   * caller, and it will disappear from this layout on the next sync.
+   */
+  setPendingItems(items, spec) {
+    this.disposeGroupContents(this.pendingGroup);
+    this.pendingGroup.clear();
+    if (!items || !items.length) return;
+
+    const gap = 2; // feet between the container wall and the staging area
+    const aisle = 1.5; // feet between staged items
+    const startX = spec.length + gap;
+    const maxRowDepth = Math.max(spec.width, 10); // feet available per "shelf" row along Z
+
+    let cursorX = startX;
+    let cursorZ = 0;
+    let rowDepth = 0; // deepest item (in X) placed in the current row
+
+    for (const item of items) {
+      const d = item.dims;
+      // Wrap to a new row along X once the current shelf (Z) is full.
+      if (cursorZ > 0 && cursorZ + d.w > maxRowDepth) {
+        cursorX += rowDepth + aisle;
+        cursorZ = 0;
+        rowDepth = 0;
+      }
+
+      const geo = new THREE.BoxGeometry(1, 1, 1);
+      const mat = new THREE.MeshLambertMaterial({
+        color: new THREE.Color(item.color || '#4f8cff'),
+        transparent: true,
+        opacity: 0.6,
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.scale.set(d.l, d.h, d.w);
+      const edges = new THREE.LineSegments(
+        new THREE.EdgesGeometry(geo),
+        new THREE.LineBasicMaterial({ color: 0x101827 })
+      );
+      edges.scale.set(d.l, d.h, d.w);
+
+      const group = new THREE.Group();
+      group.add(mesh, edges);
+      group.position.set(cursorX + d.l / 2, d.h / 2, cursorZ + d.w / 2);
+
+      const tag = makeTagSprite(item.name, item.color || '#4f8cff');
+      tag.position.set(cursorX + d.l / 2, d.h + 0.9, cursorZ + d.w / 2);
+      group.add(tag);
+
+      this.pendingGroup.add(group);
+
+      cursorZ += d.w + aisle;
+      rowDepth = Math.max(rowDepth, d.l);
+    }
   }
 
   exportPNG() {

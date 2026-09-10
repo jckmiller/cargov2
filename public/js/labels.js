@@ -108,6 +108,40 @@ export function makeLabelMeshes(placement, d) {
   return meshes;
 }
 
+/**
+ * Build a floating billboard text tag (name only) used for the "pending
+ * items" staging layout beside the container — a lightweight marker rather
+ * than the full 4-panel shipping-label sticker used on placed cargo.
+ */
+export function makeTagSprite(text, color = '#4f8cff') {
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  canvas.width = 512;
+  canvas.height = 160;
+
+  ctx.fillStyle = 'rgba(15,20,32,0.85)';
+  roundRect(ctx, 4, 4, canvas.width - 8, canvas.height - 8, 20);
+  ctx.fill();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 6;
+  ctx.stroke();
+
+  ctx.fillStyle = '#f7f9ff';
+  ctx.font = 'bold 54px system-ui, sans-serif';
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'center';
+  ctx.fillText(clip(ctx, text, canvas.width - 40), canvas.width / 2, canvas.height / 2);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.needsUpdate = true;
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
+  const sprite = new THREE.Sprite(mat);
+  const aspect = canvas.width / canvas.height;
+  const h = 1.1; // feet — tuned to stay legible at typical viewer zoom
+  sprite.scale.set(h * aspect, h, 1);
+  return sprite;
+}
+
 function clip(ctx, text, maxWidth) {
   if (ctx.measureText(text).width <= maxWidth) return text;
   let t = text;

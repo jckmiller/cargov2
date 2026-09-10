@@ -172,6 +172,7 @@ function initScene() {
     onDetails: (id) => showDetails(id),
     onDelete: (id) => removePlacement(id),
     onToggleLabels: () => toggleLabels(),
+    onTogglePending: () => togglePendingView(),
     getContainerSpec: () => getContainer(activeScenario().containerType),
     getSelectedId: () => state.selectedPlacementId,
     getSelectedIds: () => state.selectedPlacementIds,
@@ -181,12 +182,38 @@ function initScene() {
 function refreshScene() {
   const scn = activeScenario();
   if (!scn) return;
+  const spec = getContainer(scn.containerType);
   sm.setContainer(scn.containerType);
   sm.clearCargo();
   sm.setLabelsVisible(state.labelsVisible);
   sm.syncPlacements(scn.placements, state.selectedPlacementIds);
+  sm.setPendingVisible(state.pendingViewVisible);
+  if (state.pendingViewVisible) sm.setPendingItems(pendingItemsList(), spec);
   const sel = document.getElementById('container-select');
   sel.value = scn.containerType;
+}
+
+/**
+ * Build the "Pending Items" staging list: one entry per unplaced unit,
+ * across the whole catalog's remaining inventory. Placing a unit into any
+ * container reduces its remaining qty, so it drops out of this list — and
+ * the layout beside the container — on the next refresh.
+ */
+function pendingItemsList() {
+  const p = state.project;
+  if (!p) return [];
+  const out = [];
+  for (const it of p.catalog) {
+    const remaining = remainingQty(it.id);
+    for (let i = 0; i < remaining; i++) {
+      out.push({
+        name: it.name,
+        color: itemColor(it),
+        dims: { l: it.length, w: it.width, h: it.height },
+      });
+    }
+  }
+  return out;
 }
 
 function renderAll() {
@@ -326,6 +353,28 @@ function syncLabelsButton() {
   if (!btn) return;
   btn.classList.toggle('active', state.labelsVisible);
   btn.setAttribute('aria-pressed', String(state.labelsVisible));
+}
+
+/**
+ * Toggle the "Pending Items" staging view: a grid of every remaining
+ * (unplaced) catalog unit laid out beside the active container. Placing a
+ * unit removes it from the layout on the next refresh (see pendingItemsList).
+ */
+function togglePendingView() {
+  state.pendingViewVisible = !state.pendingViewVisible;
+  sm.setPendingVisible(state.pendingViewVisible);
+  if (state.pendingViewVisible) {
+    sm.setPendingItems(pendingItemsList(), getContainer(activeScenario().containerType));
+  }
+  syncPendingButton();
+}
+
+/** Reflect the current pending-view visibility on the toggle button. */
+function syncPendingButton() {
+  const btn = document.getElementById('btn-toggle-pending');
+  if (!btn) return;
+  btn.classList.toggle('active', state.pendingViewVisible);
+  btn.setAttribute('aria-pressed', String(state.pendingViewVisible));
 }
 
 // ---------- Panel handlers ----------
@@ -518,6 +567,8 @@ function wireToolbar() {
 
   document.getElementById('btn-toggle-labels').addEventListener('click', toggleLabels);
   syncLabelsButton();
+  document.getElementById('btn-toggle-pending').addEventListener('click', togglePendingView);
+  syncPendingButton();
   document.getElementById('btn-rotate').addEventListener('click', () => interaction.onKey({ key: 'r', target: {} }));
   document.getElementById('btn-tip').addEventListener('click', () => interaction.onKey({ key: 't', target: {} }));
   document.getElementById('btn-delete').addEventListener('click', () => {

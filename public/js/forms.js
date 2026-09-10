@@ -282,6 +282,7 @@ export function shortcutsModal() {
     ]],
     ['View', [
       [['L'], 'Toggle labels'],
+      [['P'], 'Toggle Pending Items (staged beside container)'],
       [['Right-Drag'], 'Orbit camera'],
       [['Scroll'], 'Zoom'],
     ]],

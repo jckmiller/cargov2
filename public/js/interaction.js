@@ -335,6 +335,8 @@ export class Interaction {
       this.cb.onEdit(id);
     } else if (key === 'l') {
       this.cb.onToggleLabels();
+    } else if (key === 'p') {
+      this.cb.onTogglePending();
     } else if (key === 'delete' || key === 'backspace') {
       // Delete every selected item (whole multi-selection), not just primary.
       const ids = this.getSelectedIds();

@@ -16,6 +16,10 @@ export const state = {
   // Always includes selectedPlacementId when a primary exists.
   selectedPlacementIds: [],
   labelsVisible: true,
+  // Show remaining (unplaced) catalog items laid out beside the container so
+  // the user can preview what's next to load. An item drops out of this
+  // layout the moment a unit of it is placed into the active container.
+  pendingViewVisible: false,
   dirty: false,
 };
 
