@@ -270,32 +270,35 @@ export class SceneManager {
 
   /**
    * Lay out one box per remaining (unplaced) catalog unit in a grid beside
-   * the container, so the user can preview what's next to load. `items` is
-   * an array of { name, dims:{l,w,h}, color } — one entry per unplaced unit.
-   * As soon as a unit gets placed it should be omitted from `items` by the
-   * caller, and it will disappear from this layout on the next sync.
+   * the container's long (length) side, so the user can preview what's next
+   * to load without it reading as an extension of the short end wall.
+   * `items` is an array of { name, dims:{l,w,h}, color } — one entry per
+   * unplaced unit. As soon as a unit gets placed it should be omitted from
+   * `items` by the caller, and it will disappear from this layout on the
+   * next sync.
    */
   setPendingItems(items, spec) {
     this.disposeGroupContents(this.pendingGroup);
     this.pendingGroup.clear();
     if (!items || !items.length) return;
 
-    const gap = 2; // feet between the container wall and the staging area
+    const gap = 2; // feet between the container's long wall and the staging area
     const aisle = 1.5; // feet between staged items
-    const startX = spec.length + gap;
-    const maxRowDepth = Math.max(spec.width, 10); // feet available per "shelf" row along Z
+    const startZ = spec.width + gap; // just past the long (length) side face
+    const maxRowSpan = Math.max(spec.length, 10); // feet available per row along X
 
-    let cursorX = startX;
-    let cursorZ = 0;
-    let rowDepth = 0; // deepest item (in X) placed in the current row
+    let cursorX = 0;
+    let cursorZ = startZ;
+    let rowSpan = 0; // deepest item (in Z) placed in the current row
 
     for (const item of items) {
       const d = item.dims;
-      // Wrap to a new row along X once the current shelf (Z) is full.
-      if (cursorZ > 0 && cursorZ + d.w > maxRowDepth) {
-        cursorX += rowDepth + aisle;
-        cursorZ = 0;
-        rowDepth = 0;
+      // Wrap to a new row (further from the container, along Z) once the
+      // current row along X (parallel to the container's length) is full.
+      if (cursorX > 0 && cursorX + d.l > maxRowSpan) {
+        cursorZ += rowSpan + aisle;
+        cursorX = 0;
+        rowSpan = 0;
       }
 
       const geo = new THREE.BoxGeometry(1, 1, 1);
@@ -312,18 +315,22 @@ export class SceneManager {
       );
       edges.scale.set(d.l, d.h, d.w);
 
+      // Group is positioned in world space at the box's center; the mesh,
+      // edges, and tag are all children placed relative to that center (i.e.
+      // in local space), so the tag stays visually attached to its own box
+      // regardless of that box's height.
       const group = new THREE.Group();
-      group.add(mesh, edges);
       group.position.set(cursorX + d.l / 2, d.h / 2, cursorZ + d.w / 2);
+      group.add(mesh, edges);
 
       const tag = makeTagSprite(item.name, item.color || '#4f8cff');
-      tag.position.set(cursorX + d.l / 2, d.h + 0.9, cursorZ + d.w / 2);
+      tag.position.set(0, d.h / 2 + 0.75, 0); // local: just above this box's top face
       group.add(tag);
 
       this.pendingGroup.add(group);
 
-      cursorZ += d.w + aisle;
-      rowDepth = Math.max(rowDepth, d.l);
+      cursorX += d.l + aisle;
+      rowSpan = Math.max(rowSpan, d.w);
     }
   }
 
