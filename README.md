@@ -7,6 +7,8 @@ summary, and JWT-secured cloud persistence.
 
 ## Quick start (local dev)
 
+Use Node.js 22 LTS (`nvm use`). No additional frontend build step is required.
+
 ```bash
 npm install        # compiles better-sqlite3 (native)
 npm start          # serves API + frontend on http://localhost:3000
@@ -42,9 +44,24 @@ variables (see `.env.example`):
 | `DB_PATH` | SQLite file path (default `/data/a3shipping.sqlite`, on the volume). |
 | `PORT` / `HOST` | Listen address (default `3000` / `0.0.0.0`). |
 | `CORS_ORIGIN` | Optional comma-separated cross-origin allow-list. |
+| `TRUST_PROXY` | Unset for direct access. Use `1` only behind one trusted proxy that overwrites forwarded headers and is the only route to the app. |
 
-**Back up** the database by copying the volume contents (e.g.
-`docker compose cp app:/data ./backup`) or snapshotting the `a3-data` volume.
+**Back up** a live database using SQLite's online backup API, not by copying a
+changing WAL database and its sidecar files independently:
+
+```bash
+# Local: choose a new absolute destination (existing files are never overwritten).
+npm run backup -- /absolute/path/to/backups/a3-2026-09-11.sqlite
+
+# Docker: create a consistent snapshot, then copy that completed file off-volume.
+docker compose exec app npm run backup -- /data/backup-2026-09-11.sqlite
+docker compose cp app:/data/backup-2026-09-11.sqlite ./backup-2026-09-11.sqlite
+```
+
+The command runs integrity and foreign-key checks on the snapshot. For restore,
+stop the app, preserve the existing database **and** WAL/SHM files, install the
+backup at `DB_PATH` with the runtime user's ownership, and restart with no stale
+WAL/SHM files at that destination. Test restores in a separate deployment first.
 
 In production the server **fails fast** if `JWT_SECRET` is unset/default, or if
 the database is empty and `ADMIN_PASSWORD` is not provided.
@@ -52,7 +69,7 @@ the database is empty and `ADMIN_PASSWORD` is not provided.
 ## Features
 
 ### 3D visualization & interaction
-- Three.js scene: right-drag orbit, scroll zoom.
+- Three.js scene: Ctrl/Cmd + left-drag orbit, scroll zoom.
 - Container types with real ISO internal dimensions and payload limits:
   20' Standard (47,900 lb), 40' Standard (58,860 lb), 40' High Cube (58,860 lb),
   40' Side-Load (8' high, 52,910 lb).
@@ -70,7 +87,9 @@ the database is empty and `ADMIN_PASSWORD` is not provided.
 - Custom items, grouped item library + saveable custom presets.
 - CSV import to populate the catalog in bulk (with a downloadable sample template).
 - Categories (general/fragile/heavy/hazardous/perishable) with color coding.
-- Full UN/DOT hazmat classes with placard colors + segregation rules.
+- Hazmat class labels and colors with a **simplified** incompatibility table.
+  These checks are not comprehensive dangerous-goods compliance advice. Have
+  qualified personnel verify segregation, load restraint and transport rules.
 - Stacking rules and a staging area for removed/unplaced items.
 
 ### 🧠 Smart auto-load engine
@@ -113,10 +132,12 @@ the database is empty and `ADMIN_PASSWORD` is not provided.
   plans are built and compared as wholes — on cargo placed, mean layout score,
   and a penalty per additional container. The proposed plan is the one with the
   best aggregate, not a chain of locally-greedy choices.
-- **Deterministic & bounded:** a seeded PRNG means identical inputs always give
-  an identical plan, and a run-wide time budget stops the search gracefully
-  (keeping the best complete plan found) so a big catalog never freezes the tab.
-  The **Simulations** field in the dialog controls search depth.
+- **Cancellable background search:** packing runs in a Web Worker, with a
+  four-second search budget and a ten-second worker timeout. The seeded PRNG
+  makes candidate ordering repeatable, but wall-clock cutoffs can change the
+  winning result across machines. Truncated results are identified explicitly.
+  The **Simulations** field controls search depth; projects are limited to 5,000
+  available units and 100 container loadings (50 new containers per run).
 - Default strategy: **Balanced (space + weight safety)** — bottom-heavy,
   densest first, stays under payload, recentres the load and evens out the
   center of gravity; honors stacking + hazmat rules.
@@ -151,9 +172,45 @@ the database is empty and `ADMIN_PASSWORD` is not provided.
 | GET | `/api/health` | health check |
 
 ## Keyboard shortcuts
-`Click` select · `Drag` move (auto-stack) · `Shift+Drag` floor · `R` rotate ·
+`Click` select · `Drag` move to floor · `Shift+Drag` stack · `R` rotate ·
 `T` tip · `E` edit · `L` toggle tags · `Dbl-Click` details · `Delete` remove ·
-`Right-Drag` camera · `Scroll` zoom.
+`Ctrl/Cmd+Left-Drag` camera · `Scroll` zoom.
+
+## Validation, tests and upgrade notes
+
+```bash
+npm run check   # Syntax-check all application, script and test JavaScript
+npm test        # Domain, geometry, persistence, worker, API, migration and backup tests
+```
+
+Tests use temporary or in-memory databases; they do not access the local app
+database. CI runs these checks on Node 22. Geometry tests use renderer doubles,
+so a real-browser/WebGL smoke test is still recommended before deployment.
+
+- Existing databases receive additive `users.token_version` and
+  `projects.revision` migrations. Back up before upgrading.
+- Existing JWTs require a fresh login after this upgrade. Deleted users lose
+  access immediately; roles are read from the database on each request;
+  password resets invalidate previously issued tokens.
+- `PUT /api/projects/:id` now requires the `revision` returned by GET/POST/PUT.
+  Missing revisions return **428**; stale revisions return **409**. Export local
+  changes before reloading after a conflict. Ordinary content saves do not
+  rewrite visibility or viewers.
+- Saves/imports validate dimensions, quantities, references, bounds, collisions,
+  support, door entry, payload and the modeled hazmat rules. Invalid legacy
+  projects are not rewritten on startup; they may need repair before saving or
+  printing. JSON export remains available to preserve a recovery copy.
+- Staging is now project-scoped and included in saves and JSON exports. Old
+  versions did not persist staging, so previously lost staging cannot be recovered.
+- Legacy `stackOn`/`stackUnder` fields remain readable for compatibility but do
+  not enforce category-specific stacking. Current stacking rejects fragile bases
+  and modeled hazmat incompatibilities and requires full footprint support.
+- Stored load scores are historical generation results and are invalidated when
+  the active loading is edited.
+
+Remaining maintenance work includes project-list pagination, a fully read-only
+viewer UI, centralized credential policy, comprehensive browser tests, and a
+professionally validated hazardous-goods/load-restraint model.
 
 ## Project layout
 ```

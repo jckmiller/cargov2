@@ -4,10 +4,9 @@ import { api } from './api.js';
 
 /**
  * Projects browser. Callbacks:
- * { onOpen(id), onNew(), onCopy(id), onImport(file), onRenamed(id, name),
+ * { onOpen(id), onNew(), onCopy(id), onImport(file), onUpdated(project, previousRevision),
  *   canWrite, canManage }
- * `onRenamed` lets the host keep the currently-open project in sync when it is
- * renamed from the Manage dialog.
+ * `onUpdated` synchronizes access metadata and revision with the open project.
  */
 export async function projectsDialog(callbacks) {
   let data = { projects: [] };
@@ -49,7 +48,7 @@ export async function projectsDialog(callbacks) {
                     manageProjectDialog(
                       project,
                       () => { close(); projectsDialog(callbacks); },
-                      callbacks.onRenamed
+                      callbacks.onUpdated
                     );
                   } catch (e) { toast(e.message, 'error'); }
                 } })
@@ -116,16 +115,17 @@ export function newProjectDialog(onCreate) {
  * the project, flip visibility between Restricted and Public, and — when
  * Restricted — pick which users may view it. The project owner is always an
  * implicit viewer, so they are excluded from the pick list.
- * `onSaved()` runs after a successful save; `onRenamed(id, name)` additionally
- * fires when the name actually changed so the host can refresh the open project.
+ * `onSaved()` refreshes the browser; `onUpdated(project, previousRevision)`
+ * synchronizes the open project's metadata without hiding stale content.
  */
-export async function manageProjectDialog(project, onSaved, onRenamed) {
+export async function manageProjectDialog(project, onSaved, onUpdated) {
   let users = [];
   try {
     const data = await api.listUsers();
     users = data.users || [];
   } catch (err) {
     toast(err.message, 'error');
+    return;
   }
 
   // Users eligible to be assigned as viewers (everyone except the owner).
@@ -181,14 +181,15 @@ export async function manageProjectDialog(project, onSaved, onRenamed) {
           // project can never end up with an empty title.
           const newName = name.value.trim() || project.name;
           try {
-            await api.updateProject(project.id, {
+            const { project: updated } = await api.updateProject(project.id, {
+              revision: project.revision,
               name: newName,
               visibility: vis.value,
               viewers,
             });
             toast('Project updated', 'ok');
             close();
-            if (onRenamed && newName !== project.name) onRenamed(project.id, newName);
+            if (onUpdated) onUpdated(updated, project.revision);
             if (onSaved) onSaved();
           } catch (e) { toast(e.message, 'error'); }
         } }),

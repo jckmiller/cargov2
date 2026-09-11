@@ -10,7 +10,7 @@
 // the primary (last-clicked) item.
 import * as THREE from 'three';
 import { activeScenario, catalogItem } from './store.js';
-import { collidesAny, restingY, snapToGrid } from './cargo.js';
+import { collidesAny, restingY, snapToGrid, layoutError } from './cargo.js';
 import { toast } from './ui.js';
 
 export class Interaction {
@@ -30,6 +30,8 @@ export class Interaction {
     dom.addEventListener('pointerdown', (e) => this.onDown(e));
     dom.addEventListener('pointermove', (e) => this.onMove(e));
     dom.addEventListener('pointerup', (e) => this.onUp(e));
+    dom.addEventListener('pointercancel', () => this.onUp());
+    dom.addEventListener('lostpointercapture', () => this.onUp());
     dom.addEventListener('dblclick', (e) => this.onDblClick(e));
     window.addEventListener('keydown', (e) => this.onKey(e));
   }
@@ -66,6 +68,7 @@ export class Interaction {
     const scenario = activeScenario();
     const placement = scenario?.placements.find((p) => p.id === id);
     if (!placement) return;
+    this.sm.renderer.domElement.setPointerCapture(e.pointerId);
 
     const currentSet = this.getSelectedIds();
     const inMultiSelection = currentSet.length > 1 && currentSet.includes(id);
@@ -122,6 +125,7 @@ export class Interaction {
         placement: p,
         offset: new THREE.Vector3(hit.x - p.x, 0, hit.z - p.z),
         lastValid: { x: p.x, y: p.y, z: p.z },
+        start: { x: p.x, y: p.y, z: p.z },
       })),
       isGroup,
       // Single-item drags honor the classic Shift-to-stack behavior. Group
@@ -192,7 +196,7 @@ export class Interaction {
     if (accepted) {
       candidate.y = ny;
       const others = activeScenario().placements;
-      if (collidesAny(candidate, others)) accepted = false;
+      if (collidesAny(candidate, others) || this.candidateError([{ ...p, ...candidate }])) accepted = false;
     }
 
     if (accepted) {
@@ -232,13 +236,13 @@ export class Interaction {
     // the 1" grid (relative to the primary member's last valid pose) while
     // the whole group stays rigid.
     if (this.snapEnabled()) {
-      const primary = members[0].lastValid;
+      const primary = members[0].start;
       dx = snapToGrid(primary.x + dx) - primary.x;
       dz = snapToGrid(primary.z + dz) - primary.z;
     }
     for (const m of members) {
       const p = m.placement;
-      const base = m.lastValid; // translate relative to the last valid pose
+      const base = m.start; // anchor-relative delta applies to the drag-start pose
       dx = Math.max(-base.x, Math.min(dx, spec.length - p.dims.l - base.x));
       dz = Math.max(-base.z, Math.min(dz, spec.width - p.dims.w - base.z));
     }
@@ -247,16 +251,15 @@ export class Interaction {
     const moveSet = this.dragging.moveSet;
     const others = activeScenario().placements.filter((o) => !moveSet.has(o.id));
     const candidates = members.map((m) => ({
-      id: m.placement.id,
-      catalogItemId: m.placement.catalogItemId,
-      x: m.lastValid.x + dx,
-      z: m.lastValid.z + dz,
-      y: m.lastValid.y,
+      ...m.placement,
+      x: m.start.x + dx,
+      z: m.start.z + dz,
+      y: m.start.y,
       dims: m.placement.dims,
     }));
 
     // Accept only if every member clears the non-selected items.
-    const accepted = candidates.every((c) => !collidesAny(c, others));
+    const accepted = candidates.every((c) => !collidesAny(c, others)) && !this.candidateError(candidates);
 
     for (let i = 0; i < members.length; i++) {
       const p = members[i].placement;
@@ -324,7 +327,8 @@ export class Interaction {
 
   onKey(e) {
     const tag = (e.target && e.target.tagName) || '';
-    if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tag)) return;
+    if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) || e.target?.isContentEditable ||
+        document.querySelector('.modal-backdrop')) return;
     if (this.cb.isMeasuring && this.cb.isMeasuring()) return; // Measure tool owns keyboard shortcuts
     const scenario = activeScenario();
     const id = this.cb.getSelectedId();
@@ -374,7 +378,8 @@ export class Interaction {
       this.cb.onToggleOpenings();
     } else if (key === 'delete' || key === 'backspace') {
       // Delete every selected item (whole multi-selection), not just primary.
-      const ids = this.getSelectedIds();
+      const ids = [...this.getSelectedIds()].sort((a, b) =>
+        (scenario.placements.find((p) => p.id === b)?.y || 0) - (scenario.placements.find((p) => p.id === a)?.y || 0));
       if (!ids.length) return;
       e.preventDefault();
       for (const delId of ids) this.cb.onDelete(delId);
@@ -386,6 +391,12 @@ export class Interaction {
     p.x = Math.max(0, Math.min(p.x, spec.length - p.dims.l));
     p.z = Math.max(0, Math.min(p.z, spec.width - p.dims.w));
     if (p.y + p.dims.h > spec.height) p.y = Math.max(0, spec.height - p.dims.h);
+  }
+
+  candidateError(candidates) {
+    const replacements = new Map(candidates.map((p) => [p.id, p]));
+    return layoutError(activeScenario().placements.map((p) => replacements.get(p.id) || p),
+      this.cb.getContainerSpec(), catalogItem);
   }
 
   /**
@@ -471,18 +482,17 @@ export class Interaction {
     // Apply the delta to a candidate pose for each member, then validate the
     // whole group against non-selected items.
     const candidates = members.map((p) => ({
-      id: p.id,
-      catalogItemId: p.catalogItemId,
+      ...p,
       x: p.x + cdx,
       y: p.y + cdy,
       z: p.z + cdz,
       dims: p.dims,
     }));
-    const blocked = candidates.some((c) => collidesAny(c, others));
+    const blocked = candidates.some((c) => collidesAny(c, others)) || this.candidateError(candidates);
     if (blocked) {
       // Nothing moved yet (we validated candidates), just warn and refresh.
       for (let i = 0; i < members.length; i++) this.sm.upsertPlacement(members[i], true);
-      toast('Blocked — no room to move there', 'warn');
+      toast(typeof blocked === 'string' ? blocked : 'Blocked — no room to move there', 'warn');
       return;
     }
 
@@ -517,7 +527,8 @@ export class Interaction {
     this.clampInside(p);
 
     const others = activeScenario().placements;
-    if (collidesAny(p, others)) {
+    const error = this.candidateError([p]);
+    if (collidesAny(p, others) || error) {
       // Revert: not enough room for this orientation here.
       p.dims = prev.dims;
       p.rot = prev.rot;
@@ -525,7 +536,7 @@ export class Interaction {
       p.y = prev.y;
       p.z = prev.z;
       this.sm.upsertPlacement(p, true);
-      toast(`Not enough room to ${label} here`, 'warn');
+      toast(error || `Not enough room to ${label} here`, 'warn');
       return;
     }
     this.sm.upsertPlacement(p, true);

@@ -54,6 +54,15 @@ function migrate() {
     CREATE INDEX IF NOT EXISTS idx_projects_owner ON projects(owner_id);
     CREATE INDEX IF NOT EXISTS idx_pv_user        ON project_viewers(user_id);
   `);
+  // Additive, idempotent migrations for existing installations.
+  db.transaction(() => {
+    if (!db.pragma('table_info(users)').some((c) => c.name === 'token_version')) {
+      db.exec('ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0');
+    }
+    if (!db.pragma('table_info(projects)').some((c) => c.name === 'revision')) {
+      db.exec('ALTER TABLE projects ADD COLUMN revision INTEGER NOT NULL DEFAULT 1');
+    }
+  })();
 }
 
 /**

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import db from '../db.js';
 import { authRequired, canWrite } from '../auth.js';
+import { validateProjectData } from '../../public/js/projectValidation.js';
 
 const router = Router();
 router.use(authRequired);
@@ -56,11 +57,21 @@ function setViewers(projectId, userIds) {
   }
 }
 
+function validateViewers(ids) {
+  if (ids === undefined) return;
+  if (!Array.isArray(ids) || ids.length > 1000 || ids.some((id) =>
+    !Number.isSafeInteger(id) || id <= 0 || !db.prepare('SELECT 1 FROM users WHERE id = ?').get(id))) {
+    throw Object.assign(new Error('viewers must contain existing user IDs'), { status: 400 });
+  }
+}
+
 // GET /api/projects  -> projects the user may read (summaries)
 router.get('/', (req, res) => {
-  const all = db.prepare('SELECT * FROM projects ORDER BY updated_at DESC').all();
+  const all = db.prepare(`SELECT * FROM projects p WHERE ? = 'admin' OR owner_id = ?
+    OR visibility = 'public' OR EXISTS (
+      SELECT 1 FROM project_viewers pv WHERE pv.project_id = p.id AND pv.user_id = ?
+    ) ORDER BY updated_at DESC`).all(req.user.role, req.user.id, req.user.id);
   const visible = all
-    .filter((p) => canReadProject(req.user, p))
     .map((p) => {
       const { data, ...meta } = p;
       let parsed = {};
@@ -100,16 +111,24 @@ router.post('/', (req, res) => {
     return res.status(403).json({ error: 'Insufficient permissions' });
   }
   const { name, visibility, data, viewers } = req.body || {};
-  if (!name) return res.status(400).json({ error: 'name required' });
+  if (typeof name !== 'string' || !name.trim() || name.length > 200) {
+    return res.status(400).json({ error: 'name must be 1–200 characters' });
+  }
+  validateViewers(viewers);
+  if (visibility !== undefined && !['public', 'restricted'].includes(visibility)) {
+    return res.status(400).json({ error: 'Invalid visibility' });
+  }
   const vis = visibility === 'public' ? 'public' : 'restricted';
-  const json = JSON.stringify(data ?? { catalog: [], scenarios: [] });
-  const info = db
-    .prepare(
-      'INSERT INTO projects (name, owner_id, visibility, data) VALUES (?, ?, ?, ?)'
-    )
-    .run(String(name), req.user.id, vis, json);
-  setViewers(info.lastInsertRowid, viewers);
-  const p = db.prepare('SELECT * FROM projects WHERE id = ?').get(info.lastInsertRowid);
+  const json = JSON.stringify(validateProjectData(data ?? { catalog: [], scenarios: [] }));
+  const p = db.transaction(() => {
+    const info = db
+      .prepare(
+        'INSERT INTO projects (name, owner_id, visibility, data) VALUES (?, ?, ?, ?)'
+      )
+      .run(name.trim(), req.user.id, vis, json);
+    setViewers(info.lastInsertRowid, viewers);
+    return db.prepare('SELECT * FROM projects WHERE id = ?').get(info.lastInsertRowid);
+  })();
   res.status(201).json({ project: withViewers(p) });
 });
 
@@ -131,6 +150,7 @@ router.post('/:id/duplicate', (req, res) => {
   const newName = name != null && String(name).trim()
     ? String(name).trim()
     : `${source.name} (Copy)`;
+  if (newName.length > 200) return res.status(400).json({ error: 'name cannot exceed 200 characters' });
   const info = db
     .prepare(
       'INSERT INTO projects (name, owner_id, visibility, data) VALUES (?, ?, ?, ?)'
@@ -148,19 +168,31 @@ router.put('/:id', (req, res) => {
   if (!canEditProject(req.user, p)) {
     return res.status(403).json({ error: 'Insufficient permissions' });
   }
-  const { name, visibility, data, viewers } = req.body || {};
+  const { name, visibility, data, viewers, revision } = req.body || {};
+  if (revision === undefined) return res.status(428).json({ error: 'Project revision required; reload before saving' });
+  if (revision !== p.revision) return res.status(409).json({ error: 'Project changed elsewhere. Export your local changes before reloading.' });
+  validateViewers(viewers);
+  if (name !== undefined && (typeof name !== 'string' || name.length > 200)) {
+    return res.status(400).json({ error: 'name must be a string of at most 200 characters' });
+  }
+  if (visibility !== undefined && !['public', 'restricted'].includes(visibility)) {
+    return res.status(400).json({ error: 'Invalid visibility' });
+  }
   // Ignore blank/whitespace-only renames so a project keeps a usable title.
   const trimmedName = name != null ? String(name).trim() : '';
   const newName = trimmedName || p.name;
   const newVis =
     visibility === 'public' || visibility === 'restricted' ? visibility : p.visibility;
-  const newData = data != null ? JSON.stringify(data) : p.data;
-  db.prepare(
-    `UPDATE projects SET name = ?, visibility = ?, data = ?, updated_at = datetime('now')
-     WHERE id = ?`
-  ).run(newName, newVis, newData, id);
-  if (viewers !== undefined) setViewers(id, viewers);
-  const updated = db.prepare('SELECT * FROM projects WHERE id = ?').get(id);
+  const newData = data !== undefined ? JSON.stringify(validateProjectData(data)) : p.data;
+  const updated = db.transaction(() => {
+    const result = db.prepare(
+      `UPDATE projects SET name = ?, visibility = ?, data = ?, revision = revision + 1, updated_at = datetime('now')
+       WHERE id = ? AND revision = ?`
+    ).run(newName, newVis, newData, id, revision);
+    if (!result.changes) throw Object.assign(new Error('Project changed elsewhere; reload before saving'), { status: 409 });
+    if (viewers !== undefined) setViewers(id, viewers);
+    return db.prepare('SELECT * FROM projects WHERE id = ?').get(id);
+  })();
   res.json({ project: withViewers(updated) });
 });
 

@@ -1,7 +1,5 @@
-// Central application state store with a tiny pub/sub.
+// Central application state. Controllers explicitly refresh affected views.
 import { uid } from './cargo.js';
-
-const listeners = new Set();
 
 export const state = {
   user: null,
@@ -27,6 +25,7 @@ export const state = {
   // narrowed entry is a real constraint the planner needs to see.
   openingsVisible: true,
   dirty: false,
+  editRevision: 0,
 };
 
 /**
@@ -61,17 +60,11 @@ export function clearSelection() {
   setSelection([]);
 }
 
-export function subscribe(fn) {
-  listeners.add(fn);
-  return () => listeners.delete(fn);
-}
-
-export function emit() {
-  for (const fn of listeners) fn(state);
-}
-
 export function markDirty() {
   state.dirty = true;
+  state.editRevision += 1;
+  const scenario = activeScenario();
+  if (scenario) delete scenario.loadScore;
 }
 
 /** Create an empty project scaffold. */
@@ -83,6 +76,7 @@ export function newProject(name = 'Untitled Project') {
     visibility: 'restricted',
     viewers: [],
     catalog: [],
+    staging: [],
     scenarios: [scenario],
   };
 }
@@ -144,9 +138,10 @@ export function remainingQty(catalogItemId) {
 
 export function setProject(project) {
   state.project = project;
+  if (project) project.staging ||= [];
   state.activeScenarioId = project?.scenarios?.[0]?.id || null;
   state.selectedPlacementId = null;
   state.selectedPlacementIds = [];
   state.dirty = false;
-  emit();
+  state.editRevision += 1;
 }

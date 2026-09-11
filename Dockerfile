@@ -4,7 +4,7 @@
 # Stage 1 — builder
 # Compiles native deps (better-sqlite3) once, with a full toolchain.
 ########################################
-FROM node:20-bookworm-slim AS builder
+FROM node:22-bookworm-slim AS builder
 
 # Build tools required to compile better-sqlite3's native addon.
 RUN apt-get update \
@@ -21,7 +21,7 @@ RUN npm ci --omit=dev
 # Stage 2 — runtime
 # Clean image with no compilers; just Node + app + prebuilt node_modules.
 ########################################
-FROM node:20-bookworm-slim AS runtime
+FROM node:22-bookworm-slim AS runtime
 
 ENV NODE_ENV=production \
     PORT=3000 \
@@ -35,6 +35,7 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY package.json ./
 COPY server ./server
 COPY public ./public
+COPY scripts ./scripts
 
 # Persistent SQLite location; owned by the unprivileged runtime user.
 RUN mkdir -p /data && chown -R node:node /data /app

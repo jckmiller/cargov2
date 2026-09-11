@@ -17,9 +17,9 @@ const PORT = process.env.PORT || 3000;
 
 const app = express();
 
-// Behind a reverse proxy (Nginx/Caddy/Traefik) so client IPs and the
-// rate limiter see the real remote address via X-Forwarded-For.
-app.set('trust proxy', 1);
+// Trust forwarded client IPs only when the deployment explicitly opts in.
+const trustProxy = process.env.TRUST_PROXY || '';
+app.set('trust proxy', /^\d+$/.test(trustProxy) ? Number(trustProxy) : trustProxy || false);
 
 // Security headers. The frontend uses an import-map + inline module scripts
 // and loads assets same-origin, so a strict-but-compatible CSP is applied.
@@ -68,6 +68,13 @@ app.use('/api/login', loginLimiter);
 app.use('/api', authRoutes);
 app.use('/api/users', usersRoutes);
 app.use('/api/projects', projectsRoutes);
+app.use('/api', (_req, res) => res.status(404).json({ error: 'API route not found' }));
+
+app.use((err, _req, res, _next) => {
+  const status = Number.isInteger(err.status) && err.status >= 400 && err.status < 500 ? err.status : 500;
+  if (status === 500) console.error('[api]', err);
+  res.status(status).json({ error: status === 500 ? 'Internal server error' : err.message });
+});
 
 // Static frontend
 const publicDir = path.join(__dirname, '..', 'public');
@@ -81,7 +88,7 @@ app.get(/^(?!\/api).*/, (_req, res) => {
 // Bind to 0.0.0.0 by default so it works inside a container; override with HOST
 // (e.g. 127.0.0.1) when running the process directly behind a local proxy.
 const HOST = process.env.HOST || '0.0.0.0';
-app.listen(PORT, HOST, () => {
+const server = app.listen(PORT, HOST, () => {
   // eslint-disable-next-line no-console
-  console.log(`A3 Shipping Pro listening on ${HOST}:${PORT}`);
+  console.log(`A3 Shipping Pro listening on ${HOST}:${server.address().port}`);
 });

@@ -145,7 +145,7 @@ export function parseCatalogCsv(text) {
     const raw = fieldOf(row, canonical);
     if (raw == null || raw === '') return undefined;
     const norm = String(raw).toLowerCase().trim();
-    return classes[norm] ? classes[norm].id : undefined;
+    return Object.hasOwn(classes, norm) ? classes[norm].id : undefined;
   };
 
   for (let r = 1; r < rows.length; r++) {
@@ -158,15 +158,25 @@ export function parseCatalogCsv(text) {
     const widthIn = numOf(row, 'width');
     const heightIn = numOf(row, 'height');
     const weight = numOf(row, 'weight');
-    const badDims = [lengthIn, widthIn, heightIn].every((v) => v == null);
+    const badDims = [lengthIn, widthIn, heightIn].some((v) => v == null || v / 12 < 0.001);
     if (badDims) {
       errors.push({ line, message: 'Dimensions must be numbers (inches) — row skipped.' });
       continue;
     }
 
+    const qtyValue = fieldOf(row, 'qty');
+    const qty = qtyValue == null || qtyValue === '' ? 1 : Number(qtyValue);
+    if (weight == null || weight < 0 || !Number.isSafeInteger(qty) || qty < 0 || qty > 5000) {
+      errors.push({ line, message: 'Weight must be nonnegative; quantity must be an integer from 0 to 5000.' });
+      continue;
+    }
+    if (['category', 'hazmatClass'].some((key) => fieldOf(row, key) &&
+        !enumOf(row, key, key === 'category' ? CATEGORIES : HAZMAT_CLASSES))) {
+      errors.push({ line, message: 'Unknown category or hazardous-material class.' });
+      continue;
+    }
     const category = enumOf(row, 'category', CATEGORIES) || 'general';
     const hazmatClass = enumOf(row, 'hazmatClass', HAZMAT_CLASSES) || 'none';
-    const qtyRaw = fieldOf(row, 'qty');
     const noTipRaw = fieldOf(row, 'noTip');
     const noTip = noTipRaw != null && /^(y|yes|true|1)$/i.test(String(noTipRaw).trim());
 
@@ -178,7 +188,7 @@ export function parseCatalogCsv(text) {
       width: widthIn != null ? widthIn / 12 : undefined,
       height: heightIn != null ? heightIn / 12 : undefined,
       weight: weight != null ? weight : undefined,
-      qtyAvailable: qtyRaw != null && qtyRaw !== '' ? Math.max(0, Math.floor(Number(qtyRaw) || 1)) : undefined,
+      qtyAvailable: qty,
       noTip,
     }));
   }

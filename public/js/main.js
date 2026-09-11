@@ -1,14 +1,16 @@
 // App entry point: authentication, wiring, and the main controller.
 import { api, loadToken, saveToken } from './api.js';
 import {
-  state, setProject, newProject, makeScenario, activeScenario, catalogItem, markDirty,
-  setSelection, toggleSelection, clearSelection, remainingQty,
+  state, setProject as setStoreProject, newProject, makeScenario, activeScenario, catalogItem, markDirty,
+  setSelection, toggleSelection, clearSelection, remainingQty, placedQty,
 } from './store.js';
 import { SceneManager } from './scene.js';
 import { Interaction } from './interaction.js';
 import { getContainer, CONTAINER_TYPES } from './container.js';
-import { makeCatalogItem, uid, itemColor, findFreePlacementAnyOrientation } from './cargo.js';
-import { packAll } from './autoload.js';
+import { makeCatalogItem, uid, itemColor, findFreePlacementAnyOrientation, layoutError } from './cargo.js';
+import { createProjectSaver } from './persistence.js';
+import { validateProjectData } from './projectValidation.js';
+import { startPacking } from './packingJob.js';
 import { presetToCatalogItem, deleteCustomPreset } from './library.js';
 import {
   renderScenarios, renderCatalog, renderLibrary, renderStats, renderStaging, renderClearances,
@@ -23,7 +25,18 @@ import { exportProjectJSON, importProjectJSON } from './io.js';
 let sm = null; // SceneManager
 let interaction = null;
 let measure = null; // MeasureTool
-const staging = []; // removed placements held aside
+let staging = []; // reference to the active project's staging array
+const persistProject = createProjectSaver(state, api);
+function setProject(project) {
+  setStoreProject(project);
+  staging = project.staging;
+}
+function mayDiscardChanges() {
+  return !state.dirty || window.confirm('Discard unsaved changes? Cancel to save or export them first.');
+}
+window.addEventListener('beforeunload', (e) => {
+  if (state.dirty) { e.preventDefault(); e.returnValue = ''; }
+});
 
 // ---------- Theme (defaults to day/light, persisted) ----------
 const THEME_KEY = 'a3_theme';
@@ -93,6 +106,8 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
 });
 
 document.getElementById('btn-logout').addEventListener('click', () => {
+  if (!mayDiscardChanges()) return;
+  state.dirty = false;
   saveToken(null);
   state.token = null;
   state.user = null;
@@ -172,6 +187,8 @@ function initScene() {
   sel.addEventListener('change', () => {
     const scn = activeScenario();
     if (!scn) return;
+    const error = layoutError(scn.placements, getContainer(sel.value), catalogItem);
+    if (error) { toast(error, 'warn'); sel.value = scn.containerType; return; }
     scn.containerType = sel.value;
     markDirty();
     refreshScene();
@@ -249,6 +266,13 @@ function pendingItemsList() {
   return out;
 }
 
+function appendCatalogItems(items) {
+  validateProjectData({ ...state.project, catalog: [...state.project.catalog, ...items] });
+  state.project.catalog.push(...items);
+  markDirty();
+  renderAll();
+}
+
 function renderAll() {
   const p = state.project;
   if (!p) return;
@@ -322,15 +346,9 @@ function addPlacementFromCatalog(catId) {
   p.x = spot.x; p.y = spot.y; p.z = spot.z; p.layer = spot.layer;
   p.dims = spot.dims; p.rot = spot.rot;
   scn.placements.push(p);
-  // The staged item is tied to the catalog: placing it again clears any staged
-  // copies. Match on catalogItemId; fall back to name for entries that lack it
-  // (e.g. auto-load leftovers).
-  for (let i = staging.length - 1; i >= 0; i--) {
-    const s = staging[i];
-    if (s.catalogItemId === item.id || (!s.catalogItemId && s.name === item.name)) {
-      staging.splice(i, 1);
-    }
-  }
+  // One placed unit consumes one staged entry, not every staged copy.
+  const stagedIndex = staging.findIndex((entry) => entry.catalogItemId === item.id);
+  if (stagedIndex >= 0) staging.splice(stagedIndex, 1);
   setSelection(p.id);
   markDirty();
   renderAll();
@@ -346,9 +364,11 @@ function editPlacement(id) {
       length: p.dims.l, width: p.dims.w, height: p.dims.h, weight: p.weight,
     }),
     (out) => {
-      p.name = out.name; p.category = out.category; p.hazmatClass = out.hazmatClass;
-      p.dims = { l: out.length, w: out.width, h: out.height };
-      p.weight = out.weight; p.color = itemColor(out);
+      const candidate = { ...p, name: out.name, category: out.category, hazmatClass: out.hazmatClass,
+        dims: { l: out.length, w: out.width, h: out.height }, weight: out.weight, color: itemColor(out) };
+      const error = layoutError(scn.placements.map((q) => q === p ? candidate : q), getContainer(scn.containerType), catalogItem);
+      if (error) throw new Error(error);
+      Object.assign(p, candidate);
       markDirty(); renderAll();
     }
   );
@@ -378,6 +398,8 @@ function removePlacement(id) {
   const scn = activeScenario();
   const idx = scn.placements.findIndex((x) => x.id === id);
   if (idx < 0) return;
+  const error = layoutError(scn.placements.filter((p) => p.id !== id), getContainer(scn.containerType), catalogItem);
+  if (error) { toast(error, 'warn'); return; }
   staging.push(scn.placements[idx]);
   scn.placements.splice(idx, 1);
   // Drop the removed item from the (possibly multi-) selection.
@@ -508,7 +530,13 @@ function scenarioHandlers() {
       ]), { title: 'Rename Container Loading' });
     },
     duplicate: (id) => {
+      if (state.project.scenarios.length >= 100) { toast('Project limit is 100 containers', 'warn'); return; }
       const s = state.project.scenarios.find((x) => x.id === id);
+      const needed = new Map();
+      for (const p of s.placements) needed.set(p.catalogItemId, (needed.get(p.catalogItemId) || 0) + 1);
+      if ([...needed].some(([catId, qty]) => qty > remainingQty(catId))) {
+        toast('Not enough remaining inventory to duplicate this loading', 'warn'); return;
+      }
       const copy = JSON.parse(JSON.stringify(s));
       copy.id = uid('scn');
       copy.name = s.name + ' (copy)';
@@ -534,11 +562,18 @@ function catalogHandlers() {
     place: (catId) => addPlacementFromCatalog(catId),
     edit: (catId) => {
       const item = catalogItem(catId);
-      itemForm(item, (out) => { Object.assign(item, out); markDirty(); renderAll(); });
+      itemForm(item, (out) => {
+        validateProjectData({ ...state.project, catalog: state.project.catalog.map((c) => c.id === catId ? out : c) });
+        Object.assign(item, out); markDirty(); renderAll();
+      });
     },
     remove: (catId) => {
+      if (placedQty(catId) > 0) { toast('Remove this item from all containers before deleting it', 'warn'); return; }
       const idx = state.project.catalog.findIndex((c) => c.id === catId);
       if (idx >= 0) state.project.catalog.splice(idx, 1);
+      for (let i = staging.length - 1; i >= 0; i--) {
+        if (staging[i].catalogItemId === catId) staging.splice(i, 1);
+      }
       markDirty(); renderAll();
     },
   };
@@ -549,8 +584,7 @@ function libraryHandlers() {
     add: (preset) => {
       const seed = presetToCatalogItem(preset);
       itemForm(seed, (out) => {
-        state.project.catalog.push(out);
-        markDirty(); renderAll();
+        appendCatalogItems([out]);
         toast(`Added "${out.name}" to catalog`, 'ok');
       });
     },
@@ -566,7 +600,7 @@ function stagingHandlers() {
       const p = staging[i];
       // Respect the shared inventory pool: only re-add if the item still has
       // remaining (unshipped) units across all container loadings.
-      if (p.catalogItemId && remainingQty(p.catalogItemId) <= 0) {
+      if (!p.catalogItemId || remainingQty(p.catalogItemId) <= 0) {
         toast(`No units of "${p.name}" left in the shipment inventory`, 'warn');
         return;
       }
@@ -586,7 +620,7 @@ function stagingHandlers() {
       scn.placements.push(p);
       markDirty(); renderAll();
     },
-    discard: (i) => { staging.splice(i, 1); renderStaging(staging, stagingHandlers()); },
+    discard: (i) => { staging.splice(i, 1); markDirty(); renderAll(); },
   };
 }
 
@@ -608,12 +642,12 @@ function showSkippedRows(errors) {
 
 function wireToolbar() {
   document.getElementById('btn-add-catalog').addEventListener('click', () => {
-    itemForm(null, (item) => { state.project.catalog.push(item); markDirty(); renderAll(); });
+    itemForm(null, (item) => appendCatalogItems([item]));
   });
   document.getElementById('btn-import-catalog').addEventListener('click', () => {
     catalogImportForm((items, errors) => {
-      state.project.catalog.push(...items);
-      markDirty(); renderAll();
+      try { appendCatalogItems(items); }
+      catch (err) { toast(err.message, 'error'); return; }
       const skipped = errors.length ? ` · ${errors.length} skipped` : '';
       toast(`Imported ${items.length} item${items.length === 1 ? '' : 's'}${skipped}`,
         errors.length ? 'warn' : 'ok');
@@ -621,6 +655,7 @@ function wireToolbar() {
     });
   });
   document.getElementById('btn-add-scenario').addEventListener('click', () => {
+    if (state.project.scenarios.length >= 100) { toast('Project limit is 100 containers', 'warn'); return; }
     const s = makeScenario(`Container ${state.project.scenarios.length + 1}`);
     state.project.scenarios.push(s);
     state.activeScenarioId = s.id;
@@ -628,78 +663,100 @@ function wireToolbar() {
   });
   document.getElementById('btn-autoload').addEventListener('click', () => {
     const scn = activeScenario();
-    autoloadForm(scn.containerType, ({ containerType, strategy, maxContainers, simulations }) => {
-      // Pack only what's left in the shared shipment inventory (append mode):
-      // each container loading already consumed its units, so auto-load fills
-      // fresh containers from the remaining pool without double-counting.
-      const remainingCatalog = state.project.catalog
-        .map((it) => ({ ...it, qtyAvailable: remainingQty(it.id) }))
-        .filter((it) => it.qtyAvailable > 0);
+    autoloadForm(scn.containerType, async ({ containerType, strategy, maxContainers, simulations }) => {
+      const project = state.project;
+      const revision = state.editRevision;
+      let closeProgress = () => {};
+      try {
+        validateProjectData(project);
+        // Pack only what's left in the shared shipment inventory (append mode):
+        // each container loading already consumed its units, so auto-load fills
+        // fresh containers from the remaining pool without double-counting.
+        const remainingCatalog = state.project.catalog
+          .map((it) => ({ ...it, qtyAvailable: remainingQty(it.id) }))
+          .filter((it) => it.qtyAvailable > 0);
 
-      if (!remainingCatalog.length) {
-        toast('No remaining inventory to pack — everything is already placed.', 'warn');
-        return;
-      }
+        if (!remainingCatalog.length) {
+          toast('No remaining inventory to pack — everything is already placed.', 'warn');
+          return;
+        }
 
-      const result = packAll(remainingCatalog, {
-        containerType, strategy, maxContainers, simulations,
-      });
+        const job = startPacking(remainingCatalog, {
+          containerType, strategy, maxContainers, simulations,
+        });
+        const busy = el('div', {}, [
+          el('p', { text: 'Searching cargo layouts… You can cancel without changing the project.' }),
+          el('button', { class: 'btn', text: 'Cancel', onClick: () => job.cancel() }),
+        ]);
+        closeProgress = openModal(() => busy, { title: 'Auto-load running', onClose: () => job.cancel() });
+        const result = await job.promise;
+        if (state.project !== project || state.editRevision !== revision) {
+          toast('Project changed during packing; result discarded. Run auto-load again.', 'warn'); return;
+        }
+        if (project.scenarios.length + result.containers.length > 100) throw new Error('Project limit is 100 container loadings');
 
-      if (!result.containers.length) {
-        toast('Nothing could be packed — check item sizes vs. container.', 'warn');
-        return;
-      }
+        if (!result.containers.length) {
+          toast('Nothing could be packed — remaining items are staged.', 'warn');
+        }
 
-      // Each packed container becomes its own new container loading, appended
-      // after any existing ones. Numbering continues from the current count.
-      const base = state.project.scenarios.length;
-      let firstId = null;
-      result.containers.forEach((c, i) => {
-        const label = `Auto — Container ${base + i + 1}`;
-        const s = makeScenario(label, c.containerType);
-        s.placements = c.placements;
-        s.generatedBy = strategy;
-        // Keep the winning simulation's score with the loading so the shipment
-        // summary can show how (and how well) this layout was chosen. Rides
-        // inside the existing project JSON blob — no schema change.
-        s.loadScore = c.score;
-        state.project.scenarios.push(s);
-        if (i === 0) firstId = s.id;
-      });
+        // Each packed container becomes its own new container loading, appended
+        // after any existing ones. Numbering continues from the current count.
+        const base = state.project.scenarios.length;
+        let firstId = null;
+        result.containers.forEach((c, i) => {
+          const label = `Auto — Container ${base + i + 1}`;
+          const s = makeScenario(label, c.containerType);
+          s.placements = c.placements;
+          s.generatedBy = strategy;
+          // Keep the winning simulation's score with the loading so the shipment
+          // summary can show how (and how well) this layout was chosen. Rides
+          // inside the existing project JSON blob — no schema change.
+          s.loadScore = c.score;
+          state.project.scenarios.push(s);
+          if (i === 0) firstId = s.id;
+        });
 
-      // Items that fit no container at all go to the staging area.
-      result.unplaced.forEach((u) => staging.push({
-        id: uid('pl'), name: u.item.name, category: u.item.category,
-        hazmatClass: u.item.hazmatClass, weight: u.item.weight, color: itemColor(u.item),
-        x: 0, y: 0, z: 0, dims: { l: u.item.length, w: u.item.width, h: u.item.height },
-        rot: { rot: 0, tipped: false }, layer: 0,
-      }));
+        // Replace stale staging entries for the inventory offered in this run.
+        const offeredIds = new Set(remainingCatalog.map((item) => item.id));
+        for (let i = staging.length - 1; i >= 0; i--) {
+          if (offeredIds.has(staging[i].catalogItemId)) staging.splice(i, 1);
+        }
+        result.unplaced.forEach((u) => staging.push({
+          id: uid('pl'), catalogItemId: u.item.id, name: u.item.name, category: u.item.category,
+          hazmatClass: u.item.hazmatClass, weight: u.item.weight, color: itemColor(u.item),
+          x: 0, y: 0, z: 0, dims: { l: u.item.length, w: u.item.width, h: u.item.height },
+          rot: { rot: 0, tipped: false }, layer: 0,
+        }));
 
-      // Switch to the first generated container.
-      if (firstId) state.activeScenarioId = firstId;
-      markDirty(); renderAll();
+        // Switch to the first generated container.
+        markDirty();
+        if (firstId) state.activeScenarioId = firstId;
+        renderAll();
 
-      const {
-        containerCount, placedUnits, totalUnits, cappedByMax, doorBlockedUnits,
-        simulationsRun, bestScore, plansEvaluated, balanceBreaches,
-      } = result.summary;
-      let msg = `${placedUnits}/${totalUnits} items across ${containerCount} container${containerCount > 1 ? 's' : ''}`;
-      // Show that the plan is the winner of a scored search, not a single try.
-      if (simulationsRun) {
-        msg += ` · best of ${plansEvaluated} plans / ${simulationsRun} layouts` +
-          ` (balance+fit score ${(bestScore * 100).toFixed(0)}/100)`;
-      }
-      if (result.unplaced.length) msg += ` · ${result.unplaced.length} staged`;
-      // Call out door-blocked items explicitly: they're not a space problem,
-      // they physically can't pass the jambs of this container type.
-      if (doorBlockedUnits) msg += ` (${doorBlockedUnits} won't clear the door)`;
-      // If even the best plan still breaches the >60%-in-one-half guideline,
-      // say so — the Balance panel will be showing a warning too.
-      if (balanceBreaches) {
-        msg += ` · ⚠ ${balanceBreaches} balance warning${balanceBreaches > 1 ? 's' : ''}`;
-      }
-      toast(msg,
-        cappedByMax || result.unplaced.length || balanceBreaches ? 'warn' : 'ok');
+        const {
+          containerCount, placedUnits, totalUnits, cappedByMax, doorBlockedUnits,
+          simulationsRun, bestScore, plansEvaluated, balanceBreaches,
+        } = result.summary;
+        let msg = `${placedUnits}/${totalUnits} items across ${containerCount} container${containerCount > 1 ? 's' : ''}`;
+        // Show that the plan is the winner of a scored search, not a single try.
+        if (simulationsRun) {
+          msg += ` · best of ${plansEvaluated} plans / ${simulationsRun} layouts` +
+            ` (balance+fit score ${(bestScore * 100).toFixed(0)}/100)`;
+        }
+        if (result.unplaced.length) msg += ` · ${result.unplaced.length} staged`;
+        // Call out door-blocked items explicitly: they're not a space problem,
+        // they physically can't pass the jambs of this container type.
+        if (doorBlockedUnits) msg += ` (${doorBlockedUnits} won't clear the door)`;
+        if (result.summary.truncated) msg += ' · time limit reached; some inventory remains unpacked';
+        // If even the best plan still breaches the >60%-in-one-half guideline,
+        // say so — the Balance panel will be showing a warning too.
+        if (balanceBreaches) {
+          msg += ` · ⚠ ${balanceBreaches} balance warning${balanceBreaches > 1 ? 's' : ''}`;
+        }
+        toast(msg,
+          cappedByMax || result.unplaced.length || balanceBreaches ? 'warn' : 'ok');
+      } catch (error) { toast(error.message, 'warn'); }
+      finally { closeProgress(); }
     });
   });
 
@@ -715,7 +772,9 @@ function wireToolbar() {
   document.getElementById('btn-tip').addEventListener('click', () => interaction.onKey({ key: 't', target: {} }));
   document.getElementById('btn-delete').addEventListener('click', () => {
     // Delete the whole selection (a copy — removePlacement mutates the set).
-    const ids = [...state.selectedPlacementIds];
+    const ids = [...state.selectedPlacementIds].sort((a, b) =>
+      (activeScenario().placements.find((p) => p.id === b)?.y || 0) -
+      (activeScenario().placements.find((p) => p.id === a)?.y || 0));
     for (const id of ids) removePlacement(id);
   });
 
@@ -744,9 +803,11 @@ function wireToolbar() {
   const captureReportViews = (list) => sm.captureViews(list, { labels: true });
 
   document.getElementById('btn-loadplan').addEventListener('click', () => {
+    try { validateProjectData(state.project); } catch (err) { toast(err.message, 'error'); return; }
     loadPlanModal(activeScenario(), state.project, state.user, captureReportViews);
   });
   document.getElementById('btn-manifest').addEventListener('click', () => {
+    try { validateProjectData(state.project); } catch (err) { toast(err.message, 'error'); return; }
     manifestModal(state.project, activeScenario(), state.user, captureReportViews);
   });
   document.getElementById('btn-export-png').addEventListener('click', () => {
@@ -760,7 +821,7 @@ function wireToolbar() {
     if (!importInput.files[0]) return;
     try {
       const proj = await importProjectJSON(importInput.files[0]);
-      setProject(proj); renderAll(); toast('Imported project', 'ok');
+      if (mayDiscardChanges()) { setProject(proj); markDirty(); renderAll(); toast('Imported project', 'ok'); }
     } catch (e) { toast(e.message, 'error'); }
     importInput.value = '';
   });
@@ -793,6 +854,7 @@ function wireTopbar() {
       canManage: state.user.role === 'admin',
       onOpen: (id) => loadProject(id),
       onNew: () => newProjectDialog(async ({ name, visibility }) => {
+        if (!mayDiscardChanges()) return;
         const proj = newProject(name); proj.visibility = visibility;
         setProject(proj); renderAll();
         await saveProject();
@@ -801,16 +863,19 @@ function wireTopbar() {
         const { project } = await api.duplicateProject(id);
         toast(`Copied to "${project.name}"`, 'ok');
       },
-      // Keep the open project in sync when it is renamed from Manage, so the
-      // topbar label updates and the next save doesn't revert the new name.
-      onRenamed: (id, name) => {
-        if (state.project && state.project.id === id) {
-          state.project.name = name;
+      // Advance the local revision only if Manage started from the same version.
+      // Otherwise leave the stale revision so a later save correctly conflicts.
+      onUpdated: (updated, previousRevision) => {
+        if (state.project && state.project.id === updated.id) {
+          state.project.name = updated.name;
+          state.project.visibility = updated.visibility;
+          state.project.viewers = updated.viewers;
+          if (state.project.revision === previousRevision) state.project.revision = updated.revision;
           renderAll();
         }
       },
       onImport: async (file) => {
-        try { const proj = await importProjectJSON(file); setProject(proj); renderAll(); toast('Imported', 'ok'); }
+        try { const proj = await importProjectJSON(file); if (!mayDiscardChanges()) return; setProject(proj); markDirty(); renderAll(); toast('Imported', 'ok'); }
         catch (e) { toast(e.message, 'error'); }
       },
     });
@@ -820,14 +885,19 @@ function wireTopbar() {
 
 async function loadProject(id) {
   try {
-    const { project } = await api.getProject(id);
+    const original = state.project;
+    const { project, canEdit } = await api.getProject(id);
+    if (state.project !== original || !mayDiscardChanges()) return;
     const data = project.data || {};
     setProject({
       id: project.id,
+      revision: project.revision,
+      canEdit,
       name: project.name,
       visibility: project.visibility,
       viewers: project.viewers || [],
       catalog: Array.isArray(data.catalog) ? data.catalog : [],
+      staging: Array.isArray(data.staging) ? data.staging : [],
       scenarios: Array.isArray(data.scenarios) && data.scenarios.length
         ? data.scenarios : [makeScenario('Container 1')],
     });
@@ -839,22 +909,11 @@ async function loadProject(id) {
 async function saveProject() {
   if (state.user.role === 'viewer') { toast('Viewers cannot save', 'error'); return; }
   const p = state.project;
-  const payload = {
-    name: p.name,
-    visibility: p.visibility,
-    viewers: (p.viewers || []).map((v) => (typeof v === 'object' ? v.id : v)),
-    data: { catalog: p.catalog, scenarios: p.scenarios },
-  };
+  if (p.canEdit === false) { toast('This project is read-only. Copy it before editing.', 'error'); return; }
   try {
-    if (p.id) {
-      await api.updateProject(p.id, payload);
-    } else {
-      const { project } = await api.createProject(payload);
-      p.id = project.id;
-    }
-    state.dirty = false;
+    await persistProject(p);
     renderAll();
-    toast('Project saved', 'ok');
+    toast(state.project === p && state.dirty ? 'Snapshot saved; newer edits still need saving' : 'Project saved', 'ok');
   } catch (e) { toast(e.message, 'error'); }
 }
 

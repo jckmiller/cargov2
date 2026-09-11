@@ -60,7 +60,7 @@ router.put('/:id', (req, res) => {
     }
   }
   if (password) {
-    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(
+    db.prepare('UPDATE users SET password_hash = ?, token_version = token_version + 1 WHERE id = ?').run(
       bcrypt.hashSync(String(password), 10),
       id
     );

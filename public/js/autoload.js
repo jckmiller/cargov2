@@ -9,7 +9,7 @@
 
 import { getContainer, getOpenings } from './container.js';
 import {
-  canStack, hazmatIncompatible, uid, itemColor, overlaps3D, restingY,
+  canStack, hazmatIncompatible, uid, itemColor, overlaps3D, restingY, placementOrientations, MAX_CATALOG_UNITS, layoutError,
 } from './cargo.js';
 import { orientationFitsOpening, scenarioStats } from './stats.js';
 
@@ -20,6 +20,9 @@ function expandUnits(catalog) {
   const units = [];
   for (const item of catalog) {
     const qty = Math.max(0, Math.floor(item.qtyAvailable || 0));
+    if (!Number.isSafeInteger(qty) || units.length + qty > MAX_CATALOG_UNITS) {
+      throw new Error(`Auto-load supports at most ${MAX_CATALOG_UNITS} units per run`);
+    }
     for (let i = 0; i < qty; i++) {
       units.push({ ...item, _unit: i + 1 });
     }
@@ -43,27 +46,7 @@ function expandUnits(catalog) {
  * load plan and manifest already use, so nothing downstream needs to change.
  */
 function orientations(item) {
-  const { length: l, width: w, height: h } = item;
-  const variants = [
-    { l, w, h, rot: 0 },          // as entered
-    { l: w, w: l, h, rot: 90 },   // R (swap L/W, still upright)
-    { l: h, w, h: l, rot: 0 },    // T (swap L/H)
-    { l: w, w: h, h: l, rot: 90 },
-    { l, w: h, h: w, rot: 0 },
-    { l: h, w: l, h: w, rot: 90 },
-  ];
-  const seen = new Set();
-  return variants
-    // A variant that changes the standing height has been tipped onto another
-    // face. Tag it so `noTip` items can drop exactly those variants.
-    .map((v) => ({ ...v, tipped: Math.abs(v.h - h) > EPS }))
-    .filter((v) => !(item.noTip && v.tipped))
-    .filter((v) => {
-      const key = `${v.l.toFixed(3)}x${v.w.toFixed(3)}x${v.h.toFixed(3)}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
+  return placementOrientations({ l: item.length, w: item.width, h: item.height }, { noTip: item.noTip });
 }
 
 /**
@@ -159,7 +142,7 @@ function unplacedReason(unit, spec) {
  *
  * @param {Array} units    pre-sorted unit instances (arrival order matters)
  * @param {object} spec    container spec
- * @param {object} options { segregateHazmat?, orientationBias? }
+ * @param {object} options { orientationBias?, deadline? }
  * @returns {{ placements, plan, totalWeight, placed:Set, remaining:Array }}
  */
 function packInto(units, spec, options = {}) {
@@ -190,7 +173,14 @@ function packInto(units, spec, options = {}) {
     currentLayer += 1;
   }
 
-  for (const unit of units) {
+  let truncated = false;
+  for (let unitIndex = 0; unitIndex < units.length; unitIndex++) {
+    if (options.deadline && Date.now() > options.deadline) {
+      remaining.push(...units.slice(unitIndex));
+      truncated = true;
+      break;
+    }
+    const unit = units[unitIndex];
     if (totalWeight + unit.weight > spec.payloadLb + EPS) {
       // Too heavy for what's left of this container's payload; it may still fit
       // an emptier container later, so hand it back as remaining.
@@ -221,13 +211,12 @@ function packInto(units, spec, options = {}) {
         const fitsWidth = cursorZ + o.w <= spec.width + EPS;
         if (!fitsLength || !fitsWidth) continue;
 
-        // Hazmat segregation within a layer.
+        // A nominal shelf layer is not a hazardous-goods segregation barrier.
         const conflict = placements.some(
           (p) =>
-            p.layer === currentLayer &&
             hazmatIncompatible(p.hazmatClass, unit.hazmatClass)
         );
-        if (conflict && options.segregateHazmat !== false) continue;
+        if (conflict) continue;
 
         // Resolve the item's actual resting height against whatever is
         // physically beneath its footprint (never a flat, guessed layer
@@ -293,7 +282,7 @@ function packInto(units, spec, options = {}) {
   }
 
   const placed = new Set(placements.map((p) => p.__item));
-  return { placements, plan, totalWeight, placed, remaining, doorBlocked };
+  return { placements, plan, totalWeight, placed, remaining, doorBlocked, truncated };
 }
 
 /**
@@ -464,9 +453,8 @@ function jitteredOrdering(base, random, strength) {
  *   3. Balance pass      — the winner is scored AFTER balanceLoad() is applied,
  *                         so the score reflects the layout the user receives.
  *
- * Deterministic: the PRNG is seeded from the unit count, so identical inputs
- * always yield an identical plan. Bounded: stops early once `timeBudgetMs` is
- * spent, so a large catalog can never hang the browser.
+ * The PRNG is seeded, but wall-clock cutoffs may change the candidates explored
+ * across machines. The UI runs this search in a cancellable worker.
  *
  * @returns the winning packInto() result (with __item attached) plus
  *          { score, candidatesRun }, or null when nothing could be placed.
@@ -520,7 +508,8 @@ function bestFill(units, spec, strategy, options = {}) {
       (options.deadline && Date.now() > options.deadline)
     )) break;
 
-    const res = packInto(cand.units(), spec, { ...options, orientationBias: cand.bias });
+    const res = packInto(cand.units(), spec, { ...options,
+      deadline: Math.min(options.deadline ?? Infinity, started + timeBudgetMs), orientationBias: cand.bias });
     candidatesRun += 1;
     if (!res.placements.length) continue;
 
@@ -621,6 +610,7 @@ function buildPlan(units, spec, strategy, maxContainers, options) {
       containerType: spec.id, placements: clean, plan: res.plan, stats, score: res.score || null,
     });
     remaining = res.remaining;
+    if (res.truncated) { truncated = true; break; }
   }
 
   return { containers, remaining, simulationsRun, truncated };
@@ -677,16 +667,16 @@ function scorePlan(plan, totalUnits) {
  *
  * @param {Array} catalog   project item catalog (with qtyAvailable)
  * @param {object} options  { strategy?, containerType?, maxContainers?,
- *                            simulations?, timeBudgetMs?, segregateHazmat? }
+ *                            simulations?, timeBudgetMs?, totalTimeBudgetMs? }
  * @returns {{ containers, unplaced, summary }}
  *   containers: [{ containerType, placements, plan, stats, score }]
  */
 export function packAll(catalog, options = {}) {
   const strategy = options.strategy || 'balanced';
   const containerType = options.containerType || '20STD';
-  const maxContainers = Math.max(1, Math.floor(options.maxContainers || 10));
+  const maxContainers = Math.min(50, Math.max(1, Math.floor(options.maxContainers || 10)));
   const spec = getContainer(containerType);
-  const requested = Math.max(1, Math.floor(options.simulations ?? DEFAULT_SIMULATIONS));
+  const requested = Math.min(200, Math.max(1, Math.floor(options.simulations ?? DEFAULT_SIMULATIONS)));
 
   const units = expandUnits(catalog);
   const totalUnits = units.length;
@@ -721,11 +711,9 @@ export function packAll(catalog, options = {}) {
   let plansEvaluated = 0;
 
   // One wall-clock deadline for the ENTIRE run, shared by every plan and every
-  // simulation. The ladder runs SHALLOWEST-first: a shallow plan is cheap and
-  // therefore always completes, guaranteeing that a full plan covering all the
-  // cargo exists before any expensive deep search begins. Ordering it the other
-  // way round lets one deep plan eat the whole budget and strand most of the
-  // inventory in the staging area.
+  // simulation. The ladder runs SHALLOWEST-first to favor completing a baseline
+  // before attempting deeper searches. Even the baseline can time out on large
+  // inputs; that is reported explicitly rather than called a complete plan.
   const deadline = Date.now() + (options.totalTimeBudgetMs ?? DEFAULT_TOTAL_TIME_BUDGET_MS);
   const ladder = [];
   for (const depth of depths) {
@@ -778,6 +766,7 @@ export function packAll(catalog, options = {}) {
       unplacedUnits: unplaced.length,
       doorBlockedUnits,
       cappedByMax: remaining.length > 0 && containers.length >= maxContainers,
+      truncated: bestPlan ? bestPlan.truncated : Date.now() > deadline,
       // How much searching was done, and how the winning plan scored.
       // `bestScore` is the mean per-container layout score (the balance + item
       // metrics) so it reads as "how good are these loads"; `planScore` is the
@@ -870,7 +859,6 @@ function slotAccepts(slot, unit, placements) {
   const hazConflict = placements.some(
     (p) =>
       p !== slot &&
-      p.layer === slot.layer &&
       hazmatIncompatible(p.hazmatClass, unit.hazmatClass)
   );
   if (hazConflict) return false;
@@ -982,7 +970,8 @@ function balanceByCog(placements, spec) {
   }
 
   // Keep the new layout only if it genuinely improves balance.
-  if (cogSkew(placements, spec) >= before - EPS) {
+  if (layoutError(placements, spec, (id) => placements.find((p) => p.catalogItemId === id)?.__item) ||
+      cogSkew(placements, spec) >= before - EPS) {
     placements.forEach((p, i) => Object.assign(p, snapshot[i]));
   }
 }
@@ -1025,20 +1014,18 @@ export const DEFAULT_MAX_CONTAINERS = 10;
 
 // How many RANDOMIZED simulations each container runs, on top of the
 // deterministic seed orderings × orientation biases. More simulations explore
-// more layouts (better scores) at a linear CPU cost — all synchronous in the
-// browser, hence the companion time budget below.
+// more layouts at additional CPU cost. The browser executes this in a worker.
 export const DEFAULT_SIMULATIONS = 16;
 
-// Wall-clock ceiling per container for the simulation search. Once exceeded,
-// the search stops early and returns the best layout found so far, so a large
-// catalog degrades gracefully instead of freezing the tab.
+// Cooperative per-container budget. Checked between candidates and units;
+// the worker's outer timeout also covers indivisible expensive operations.
 export const DEFAULT_TIME_BUDGET_MS = 1200;
 
 // Wall-clock ceiling for an ENTIRE auto-load run: every plan in the ladder,
 // every container, every simulation. This is the number that actually bounds
 // how long the user waits after clicking Generate, so it's the important one.
-// The search degrades gracefully — it keeps the best complete plan found so
-// far — rather than blocking the page.
+// Prefer complete plans when available and report a truncated fallback when
+// necessary. Worker isolation, not this deadline, keeps the page responsive.
 export const DEFAULT_TOTAL_TIME_BUDGET_MS = 4000;
 
 // Multiplier applied to a layout's aggregate score for EACH axis that breaches

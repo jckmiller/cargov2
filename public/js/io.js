@@ -1,4 +1,6 @@
 // Local JSON import/export of layouts (whole projects).
+import { validateProjectData } from './projectValidation.js';
+import { makeScenario } from './store.js';
 
 export function exportProjectJSON(project) {
   const payload = {
@@ -10,6 +12,7 @@ export function exportProjectJSON(project) {
       visibility: project.visibility,
       catalog: project.catalog,
       scenarios: project.scenarios,
+      staging: project.staging || [],
     },
   };
   const blob = new Blob([JSON.stringify(payload, null, 2)], {
@@ -29,17 +32,20 @@ export function importProjectJSON(file) {
     reader.onload = () => {
       try {
         const data = JSON.parse(reader.result);
+        if (data.version !== undefined && data.version !== 1) throw new Error('Unsupported project file version');
         const p = data.project || data;
         if (!p || !Array.isArray(p.scenarios)) {
           throw new Error('Invalid layout file');
         }
+        validateProjectData(p);
         resolve({
           id: null,
           name: p.name || 'Imported Project',
           visibility: p.visibility === 'public' ? 'public' : 'restricted',
           viewers: [],
           catalog: Array.isArray(p.catalog) ? p.catalog : [],
-          scenarios: p.scenarios,
+          scenarios: p.scenarios.length ? p.scenarios : [makeScenario('Container 1')],
+          staging: p.staging || [],
         });
       } catch (err) {
         reject(err);

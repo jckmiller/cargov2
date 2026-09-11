@@ -133,10 +133,6 @@ export function getContainer(id) {
   return CONTAINER_TYPES[id] || CONTAINER_TYPES['20STD'];
 }
 
-export function containerVolumeFt3(spec) {
-  return spec.length * spec.width * spec.height;
-}
-
 /** Format decimal feet as feet + inches, e.g. 19.35 -> 19' 4" */
 export function fmtFeet(value) {
   const ft = Math.floor(value);

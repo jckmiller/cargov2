@@ -45,12 +45,16 @@ export function openModal(render, options = {}) {
   backdrop.appendChild(modal);
   host.appendChild(backdrop);
 
+  let closed = false;
   function close() {
+    if (closed) return;
+    closed = true;
     document.removeEventListener('keydown', onKey);
     backdrop.remove();
+    options.onClose?.();
   }
   function onKey(e) {
-    if (e.key === 'Escape') close();
+    if (e.key === 'Escape' && host.lastElementChild === backdrop) close();
   }
   document.addEventListener('keydown', onKey);
   backdrop.addEventListener('mousedown', (e) => {

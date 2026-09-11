@@ -1,4 +1,5 @@
 import jwt from 'jsonwebtoken';
+import db from './db.js';
 
 const DEFAULT_SECRET = 'change-me-in-production';
 const JWT_SECRET = process.env.JWT_SECRET || DEFAULT_SECRET;
@@ -18,7 +19,7 @@ if (process.env.NODE_ENV === 'production' && JWT_SECRET === DEFAULT_SECRET) {
  */
 export function signToken(user) {
   return jwt.sign(
-    { id: user.id, username: user.username, role: user.role },
+    { id: user.id, tokenVersion: user.token_version ?? 0 },
     JWT_SECRET,
     { expiresIn: JWT_EXPIRES_IN }
   );
@@ -34,11 +35,15 @@ export function authRequired(req, res, next) {
     return res.status(401).json({ error: 'Authentication required' });
   }
   try {
-    req.user = jwt.verify(token, JWT_SECRET);
-    next();
+    const claims = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
+    if (!Number.isSafeInteger(claims.id)) throw new Error('Invalid user');
+    const user = db.prepare('SELECT id, username, role, token_version FROM users WHERE id = ?').get(claims.id);
+    if (!user || claims.tokenVersion !== user.token_version) throw new Error('Revoked session');
+    req.user = { id: user.id, username: user.username, role: user.role };
   } catch {
     return res.status(401).json({ error: 'Invalid or expired token' });
   }
+  next();
 }
 
 /**

@@ -137,6 +137,8 @@ export class SceneManager {
     // actually changes. Plain refreshes (place/delete/edit/nudge/etc.) rebuild
     // the geometry but must preserve the user's current viewpoint.
     const changed = this._containerType !== containerType;
+    if (!changed) return;
+    this.disposeGroupContents(this.containerGroup);
     this.containerGroup.clear();
     this._containerType = containerType;
     const spec = getContainer(containerType);
@@ -145,6 +147,7 @@ export class SceneManager {
     // Wireframe box (edges), centered on the container volume.
     const box = new THREE.BoxGeometry(L, H, W);
     const edges = new THREE.EdgesGeometry(box);
+    box.dispose();
     const line = new THREE.LineSegments(
       edges,
       new THREE.LineBasicMaterial({ color: 0x4f8cff })
@@ -381,7 +384,10 @@ export class SceneManager {
     // Position by center (placement stores min-corner).
     group.position.set(p.x + d.l / 2, p.y + d.h / 2, p.z + d.w / 2);
 
-    // Update label stickers: rebuild since dims change on rotate/tip.
+    // Position/selection-only updates reuse label textures and geometry.
+    const labelKey = JSON.stringify([p.name, p.category, p.hazmatClass, p.weight, p.color, d.l, d.w, d.h]);
+    if (group.userData.labelKey === labelKey) return group;
+    group.userData.labelKey = labelKey;
     const old = this.labelGroups.get(p.id);
     if (old) {
       group.remove(old);
@@ -402,8 +408,7 @@ export class SceneManager {
     if (group) {
       this.cargoGroup.remove(group);
       this.placementMeshes.delete(id);
-      const lg = this.labelGroups.get(id);
-      if (lg) this.disposeLabelGroup(lg);
+      this.disposeGroupContents(group);
       this.labelGroups.delete(id);
     }
   }
@@ -492,8 +497,10 @@ export class SceneManager {
     group.traverse((obj) => {
       if (obj.geometry) obj.geometry.dispose();
       if (obj.material) {
-        if (obj.material.map) obj.material.map.dispose();
-        obj.material.dispose();
+        for (const material of Array.isArray(obj.material) ? obj.material : [obj.material]) {
+          if (material.map) material.map.dispose();
+          material.dispose();
+        }
       }
     });
   }
@@ -718,6 +725,10 @@ export class SceneManager {
       'pointerdown', this._onPointerDownCapture, { capture: true }
     );
     this.renderer.domElement.removeEventListener('contextmenu', this._onContextMenu);
+    this.controls.dispose();
+    this.disposeGroupContents(this.scene);
+    this.placementMeshes.clear();
+    this.labelGroups.clear();
     this.renderer.dispose();
     if (this.renderer.domElement.parentNode) {
       this.renderer.domElement.parentNode.removeChild(this.renderer.domElement);

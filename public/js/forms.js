@@ -40,27 +40,31 @@ export function itemForm(existing, onSave) {
 
   openModal((close) => {
     function submit() {
-      const out = makeCatalogItem({
-        id: item.id,
-        name: f.name.value.trim() || 'Item',
-        category: catSel.value,
-        hazmatClass: hazSel.value,
-        length: parseFloat(f.length.value) / 12,
-        width: parseFloat(f.width.value) / 12,
-        height: parseFloat(f.height.value) / 12,
-        weight: parseFloat(f.weight.value),
-        qtyAvailable: parseInt(f.qty.value, 10),
-        stackOn: item.stackOn,
-        stackUnder: item.stackUnder,
-        color: item.color,
-        noTip: noTip.checked,
-      });
-      if (savePreset.checked) {
-        saveCustomPreset(out);
-        toast('Saved as custom preset', 'ok');
+      try {
+        const out = makeCatalogItem({
+          id: item.id,
+          name: f.name.value.trim() || 'Item',
+          category: catSel.value,
+          hazmatClass: hazSel.value,
+          length: parseFloat(f.length.value) / 12,
+          width: parseFloat(f.width.value) / 12,
+          height: parseFloat(f.height.value) / 12,
+          weight: parseFloat(f.weight.value),
+          qtyAvailable: f.qty.value.trim() === '' ? NaN : Number(f.qty.value),
+          stackOn: item.stackOn,
+          stackUnder: item.stackUnder,
+          color: item.color,
+          noTip: noTip.checked,
+        });
+        if (savePreset.checked) {
+          saveCustomPreset(out);
+          toast('Saved as custom preset', 'ok');
+        }
+        onSave(out);
+        close();
+      } catch (err) {
+        toast(err.message, 'error');
       }
-      onSave(out);
-      close();
     }
     return el('div', {}, [
       el('div', { class: 'form-grid' }, [
@@ -228,7 +232,7 @@ export function autoloadForm(currentContainer, onGenerate) {
           onClick: () => {
             const maxContainers = Math.max(
               1,
-              Math.floor(Number(maxInput.value) || DEFAULT_MAX_CONTAINERS)
+              Math.min(50, Math.floor(Number(maxInput.value) || DEFAULT_MAX_CONTAINERS))
             );
             const simulations = Math.max(
               1,

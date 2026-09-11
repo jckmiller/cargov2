@@ -6,7 +6,7 @@ import {
   scenarioStats, placementClearances, doorFit, fmtLb, fmtPct, fmtFt3,
 } from './stats.js';
 import { BUILTIN_GROUPS, loadCustomPresets } from './library.js';
-import { remainingQty } from './store.js';
+import { remainingQty, catalogItem } from './store.js';
 
 export function renderScenarios(project, activeId, handlers) {
   const host = document.getElementById('container-list');
@@ -344,7 +344,7 @@ function renderDoorFit(host, placement, spec) {
     ));
   }
 
-  const fit = doorFit(placement.dims, spec, { noTip: placement.noTip });
+  const fit = doorFit(placement.dims, spec, { noTip: catalogItem(placement.catalogItemId)?.noTip });
   if (!fit.fits) {
     host.appendChild(
       el('div', {

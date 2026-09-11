@@ -365,23 +365,6 @@ export function doorFit(dims, spec, options = {}) {
   return best || base;
 }
 
-/**
- * Placements in a scenario whose item could never have been carried in
- * through an opening, each with the tightest dimension called out. Used to
- * flag loads that are geometrically packed but physically unloadable.
- */
-export function passThroughViolations(scenario, spec) {
-  const out = [];
-  for (const p of scenario.placements || []) {
-    // Check the item's intrinsic size (its own dims as placed) — a placement
-    // already reflects the orientation chosen, but the item could be re-turned
-    // on the way in, so doorFit re-examines every legal orientation.
-    const fit = doorFit(p.dims, spec, { noTip: p.rot?.noTip });
-    if (!fit.fits) out.push({ placement: p, fit });
-  }
-  return out;
-}
-
 export function fmtLb(n) {
   return `${Math.round(n).toLocaleString()} lb`;
 }

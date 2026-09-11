@@ -1,4 +1,15 @@
 // Cargo domain: categories, hazmat classes, colors, stacking rules, and helpers.
+import { getOpenings } from './container.js';
+
+export const MAX_CATALOG_UNITS = 5000;
+
+function numeric(value, fallback, name, min, integer = false) {
+  const n = value == null ? fallback : Number(value);
+  if (!Number.isFinite(n) || n < min || (integer && !Number.isSafeInteger(n))) {
+    throw new Error(`${name} must be ${integer ? 'an integer' : 'a number'} ≥ ${min}`);
+  }
+  return n;
+}
 
 export const CATEGORIES = {
   general: { id: 'general', label: 'General', color: '#4f8cff' },
@@ -65,16 +76,19 @@ export function uid(prefix = 'id') {
  * Create a normalized catalog item. Dimensions in feet.
  */
 export function makeCatalogItem(partial = {}) {
+  if (partial.qtyAvailable != null && Number(partial.qtyAvailable) > MAX_CATALOG_UNITS) {
+    throw new Error(`Quantity cannot exceed ${MAX_CATALOG_UNITS}`);
+  }
   return {
     id: partial.id || uid('cat'),
     name: partial.name || 'New Item',
     category: partial.category || 'general',
     hazmatClass: partial.hazmatClass || 'none',
-    length: Number(partial.length) || 4,
-    width: Number(partial.width) || 3.5,
-    height: Number(partial.height) || 4,
-    weight: Number(partial.weight) || 500,
-    qtyAvailable: partial.qtyAvailable != null ? Number(partial.qtyAvailable) : 1,
+    length: numeric(partial.length, 4, 'Length', 0.001),
+    width: numeric(partial.width, 3.5, 'Width', 0.001),
+    height: numeric(partial.height, 4, 'Height', 0.001),
+    weight: numeric(partial.weight, 500, 'Weight', 0),
+    qtyAvailable: numeric(partial.qtyAvailable, 1, 'Quantity', 0, true),
     stackOn: partial.stackOn || ['general', 'heavy'],
     stackUnder: partial.stackUnder || ['general', 'fragile', 'perishable'],
     color: partial.color || null,
@@ -101,10 +115,6 @@ export function canStack(top, base) {
   // be placed higher when the floor is full (no stackOn/stackUnder category gate).
   if (hazmatIncompatible(top?.hazmatClass, base?.hazmatClass)) return false;
   return true;
-}
-
-export function itemVolumeFt3(item) {
-  return item.length * item.width * item.height;
 }
 
 // ---------------------------------------------------------------------------
@@ -274,6 +284,9 @@ function subtractRect(p, s) {
  */
 export function findFreePlacement(placements, spec, dims, options = {}) {
   const topItem = options.item || { category: 'general' };
+  if (placements.some((p) => hazmatIncompatible(p.hazmatClass, topItem.hazmatClass))) return null;
+  if (placements.reduce((sum, p) => sum + (p.weight || 0), 0) + (topItem.weight || 0) > spec.payloadLb) return null;
+  if (![dims.l, dims.w, dims.h].every((v) => Number.isFinite(v) && v > 0)) return null;
   const baseLookup = options.baseLookup || null;
   const maxX = spec.length - dims.l;
   const maxZ = spec.width - dims.w;
@@ -322,7 +335,12 @@ export function placementOrientations(dims, options = {}) {
   // Respect the catalog item's "do not tip" flag: skip the tip (L/H swap)
   // orientation entirely for items that can't safely be placed on their side.
   if (!options.noTip) {
-    variants.push({ l: dims.h, w: dims.w, h: dims.l, rot: 0, tipped: true }); // T
+    variants.push(
+      { l: dims.h, w: dims.w, h: dims.l, rot: 0, tipped: true },
+      { l: dims.w, w: dims.h, h: dims.l, rot: 90, tipped: true },
+      { l: dims.l, w: dims.h, h: dims.w, rot: 0, tipped: true },
+      { l: dims.h, w: dims.l, h: dims.w, rot: 90, tipped: true },
+    );
   }
   const seen = new Set();
   return variants.filter((v) => {
@@ -345,10 +363,49 @@ export function placementOrientations(dims, options = {}) {
 export function findFreePlacementAnyOrientation(placements, spec, dims, options = {}) {
   const noTip = !!(options.noTip ?? options.item?.noTip);
   for (const o of placementOrientations(dims, { noTip })) {
+    if (!fitsOpening(o, spec)) continue;
     const spot = findFreePlacement(placements, spec, { l: o.l, w: o.w, h: o.h }, options);
     if (spot) {
       return { ...spot, dims: { l: o.l, w: o.w, h: o.h }, rot: { rot: o.rot, tipped: o.tipped } };
     }
   }
   return null;
+}
+
+/** Axis-aligned entry check shared by manual placement and layout validation. */
+export function fitsOpening(dims, spec) {
+  const openings = getOpenings(spec);
+  return !openings.length || openings.some((op) => {
+    const end = op.face === 'front' || op.face === 'back';
+    return (end ? dims.w : dims.l) <= op.width + COLLISION_EPS &&
+      dims.h <= Math.min(op.height, spec.height - (op.sill || 0)) + COLLISION_EPS;
+  });
+}
+
+/** Validate the whole candidate layout, including cargo supported by moved items. */
+export function layoutError(placements, spec, lookup = () => null) {
+  let weight = 0;
+  const ids = new Set();
+  for (const p of placements) {
+    const d = p.dims;
+    if (!d || ![d.l, d.w, d.h].every((n) => Number.isFinite(n) && n > 0) ||
+        ![p.x, p.y, p.z, p.weight].every(Number.isFinite) || p.weight < 0) return 'Invalid cargo dimensions, position or weight';
+    if (!p.id || ids.has(p.id)) return 'Placement IDs must be unique';
+    ids.add(p.id);
+    if (p.x < -COLLISION_EPS || p.y < -COLLISION_EPS || p.z < -COLLISION_EPS ||
+        p.x + d.l > spec.length + COLLISION_EPS || p.y + d.h > spec.height + COLLISION_EPS ||
+        p.z + d.w > spec.width + COLLISION_EPS) return `"${p.name}" is outside the container`;
+    if (collidesAny(p, placements)) return `"${p.name}" overlaps other cargo`;
+    const item = lookup(p.catalogItemId) || p;
+    if (placements.some((q) => q !== p && hazmatIncompatible(p.hazmatClass, q.hazmatClass))) return 'Incompatible hazardous cargo cannot share a container';
+    if (!placementOrientations(d, { noTip: item.noTip }).some((o) => fitsOpening(o, spec))) return `"${p.name}" cannot clear the door`;
+    if (item.noTip && item.height != null && Math.abs(d.h - item.height) > COLLISION_EPS) return `"${p.name}" must stay upright`;
+    if (p.y > COLLISION_EPS) {
+      const supports = placements.filter((q) => q !== p && Math.abs(q.y + q.dims.h - p.y) < 1e-4 &&
+        overlapsXZ(p, q) && canStack(p, q));
+      if (!isFullySupported(p, supports)) return `"${p.name}" would be unsupported`;
+    }
+    weight += p.weight;
+  }
+  return weight > spec.payloadLb ? 'Container payload limit exceeded' : null;
 }
