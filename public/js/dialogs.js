@@ -3,7 +3,11 @@ import { el, openModal, toast, confirmDialog } from './ui.js';
 import { api } from './api.js';
 
 /**
- * Projects browser. Callbacks: { onOpen(id), onNew(), onImport(file), canWrite }
+ * Projects browser. Callbacks:
+ * { onOpen(id), onNew(), onCopy(id), onImport(file), onRenamed(id, name),
+ *   canWrite, canManage }
+ * `onRenamed` lets the host keep the currently-open project in sync when it is
+ * renamed from the Manage dialog.
  */
 export async function projectsDialog(callbacks) {
   let data = { projects: [] };
@@ -42,7 +46,11 @@ export async function projectsDialog(callbacks) {
               ? el('button', { class: 'btn small', text: 'Manage', onClick: async () => {
                   try {
                     const { project } = await api.getProject(p.id);
-                    manageProjectDialog(project, () => { close(); projectsDialog(callbacks); });
+                    manageProjectDialog(
+                      project,
+                      () => { close(); projectsDialog(callbacks); },
+                      callbacks.onRenamed
+                    );
                   } catch (e) { toast(e.message, 'error'); }
                 } })
               : null,
@@ -104,12 +112,14 @@ export function newProjectDialog(onCreate) {
 }
 
 /**
- * Admin "Manage sharing" dialog for an existing project. Lets an admin flip
- * visibility between Restricted and Public, and — when Restricted — pick which
- * users may view it. The project owner is always an implicit viewer, so they
- * are excluded from the pick list. `onSaved()` runs after a successful save.
+ * Admin "Manage project" dialog for an existing project. Lets an admin rename
+ * the project, flip visibility between Restricted and Public, and — when
+ * Restricted — pick which users may view it. The project owner is always an
+ * implicit viewer, so they are excluded from the pick list.
+ * `onSaved()` runs after a successful save; `onRenamed(id, name)` additionally
+ * fires when the name actually changed so the host can refresh the open project.
  */
-export async function manageProjectDialog(project, onSaved) {
+export async function manageProjectDialog(project, onSaved, onRenamed) {
   let users = [];
   try {
     const data = await api.listUsers();
@@ -121,6 +131,8 @@ export async function manageProjectDialog(project, onSaved) {
   // Users eligible to be assigned as viewers (everyone except the owner).
   const assignable = users.filter((u) => u.id !== project.owner_id);
   const currentViewerIds = new Set((project.viewers || []).map((v) => v.id));
+
+  const name = el('input', { value: project.name });
 
   const vis = el('select', {}, [
     el('option', { value: 'restricted', ...(project.visibility === 'restricted' ? { selected: '' } : {}), text: 'Restricted' }),
@@ -152,6 +164,7 @@ export async function manageProjectDialog(project, onSaved) {
   openModal((close) =>
     el('div', {}, [
       el('div', { class: 'form-grid' }, [
+        el('label', { class: 'full-col' }, ['Name', name]),
         el('label', { class: 'full-col' }, ['Visibility', vis]),
       ]),
       viewersSection,
@@ -164,10 +177,18 @@ export async function manageProjectDialog(project, onSaved) {
                 .filter((cb) => cb.checked)
                 .map((cb) => Number(cb.value))
             : [];
+          // Blank/whitespace-only names fall back to the existing name so a
+          // project can never end up with an empty title.
+          const newName = name.value.trim() || project.name;
           try {
-            await api.updateProject(project.id, { visibility: vis.value, viewers });
-            toast('Sharing updated', 'ok');
+            await api.updateProject(project.id, {
+              name: newName,
+              visibility: vis.value,
+              viewers,
+            });
+            toast('Project updated', 'ok');
             close();
+            if (onRenamed && newName !== project.name) onRenamed(project.id, newName);
             if (onSaved) onSaved();
           } catch (e) { toast(e.message, 'error'); }
         } }),

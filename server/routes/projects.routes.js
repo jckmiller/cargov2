@@ -149,7 +149,9 @@ router.put('/:id', (req, res) => {
     return res.status(403).json({ error: 'Insufficient permissions' });
   }
   const { name, visibility, data, viewers } = req.body || {};
-  const newName = name != null ? String(name) : p.name;
+  // Ignore blank/whitespace-only renames so a project keeps a usable title.
+  const trimmedName = name != null ? String(name).trim() : '';
+  const newName = trimmedName || p.name;
   const newVis =
     visibility === 'public' || visibility === 'restricted' ? visibility : p.visibility;
   const newData = data != null ? JSON.stringify(data) : p.data;

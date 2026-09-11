@@ -785,6 +785,14 @@ function wireTopbar() {
         const { project } = await api.duplicateProject(id);
         toast(`Copied to "${project.name}"`, 'ok');
       },
+      // Keep the open project in sync when it is renamed from Manage, so the
+      // topbar label updates and the next save doesn't revert the new name.
+      onRenamed: (id, name) => {
+        if (state.project && state.project.id === id) {
+          state.project.name = name;
+          renderAll();
+        }
+      },
       onImport: async (file) => {
         try { const proj = await importProjectJSON(file); setProject(proj); renderAll(); toast('Imported', 'ok'); }
         catch (e) { toast(e.message, 'error'); }
