@@ -1,8 +1,10 @@
 // Render the left (scenarios/catalog/library), right (stats/staging) panels.
 import { el } from './ui.js';
 import { CATEGORIES, itemColor } from './cargo.js';
-import { getContainer, fmtInches, fmtFeet } from './container.js';
-import { scenarioStats, placementClearances, fmtLb, fmtPct, fmtFt3 } from './stats.js';
+import { getContainer, fmtInches, fmtFeet, getOpenings } from './container.js';
+import {
+  scenarioStats, placementClearances, doorFit, fmtLb, fmtPct, fmtFt3,
+} from './stats.js';
 import { BUILTIN_GROUPS, loadCustomPresets } from './library.js';
 import { remainingQty } from './store.js';
 
@@ -41,8 +43,14 @@ export function renderCatalog(project, handlers, activeScenario) {
   // Inventory is a single shared pool consumed across ALL container loadings.
   // Placing a unit into any container draws down the item's remaining quantity
   // so the same inventory can't be over-placed across the shipment.
+  // Flag catalog items that can't clear the active container's door jambs —
+  // they'd be unloadable no matter how much room is left inside.
+  const activeSpec = activeScenario ? getContainer(activeScenario.containerType) : null;
   for (const it of project.catalog) {
     const total = Math.max(0, Math.floor(it.qtyAvailable || 0));
+    const doorBlocked = activeSpec
+      ? !doorFit({ l: it.length, w: it.width, h: it.height }, activeSpec, { item: it }).fits
+      : false;
     const remaining = remainingQty(it.id);
     const depleted = remaining <= 0;
     const chipText = total ? `${remaining} / ${total} left` : 'none available';
@@ -60,6 +68,14 @@ export function renderCatalog(project, handlers, activeScenario) {
                 style: 'background:var(--warn)',
                 title: 'Cannot be tipped onto its side',
                 text: '⚠ No Tip',
+              })
+            : null,
+          doorBlocked
+            ? el('span', {
+                class: 'chip',
+                style: 'background:var(--danger)',
+                title: `Too large to pass the ${activeSpec.name} door opening in any allowed orientation`,
+                text: '⚠ Door',
               })
             : null,
         ]),
@@ -294,6 +310,67 @@ export function renderClearances(placement, spec) {
   host.appendChild(rowKV('To right wall', fmtFeet(c.right)));
   host.appendChild(rowKV('To floor', fmtFeet(c.floor)));
   host.appendChild(rowKV('To roof', fmtFeet(c.roof)));
+
+  renderDoorFit(host, placement, spec);
+}
+
+/**
+ * Door/jamb pass-through readout for the selected item: the clear opening it
+ * has to go through, the orientation that gets it in, and how little room is
+ * left at the header — which is the binding constraint on every container
+ * type (each is several inches taller inside than its door).
+ */
+function renderDoorFit(host, placement, spec) {
+  const openings = getOpenings(spec);
+  if (!openings.length) return;
+
+  const rowKV = (k, v, style) =>
+    el('div', { class: 'stat-row', style }, [
+      el('span', { class: 'k', text: k }), el('span', { text: v }),
+    ]);
+
+  host.appendChild(
+    el('div', {
+      class: 'sub',
+      style: 'margin-top:8px;font-weight:600',
+      text: 'Door / jamb',
+    })
+  );
+
+  for (const op of openings) {
+    host.appendChild(rowKV(
+      op.label,
+      `${fmtFeet(op.width)} W × ${fmtFeet(op.height)} H clear`
+    ));
+  }
+
+  const fit = doorFit(placement.dims, spec, { noTip: placement.noTip });
+  if (!fit.fits) {
+    host.appendChild(
+      el('div', {
+        class: 'sub',
+        style: 'color:var(--danger)',
+        text: '⚠ Will not pass the door opening in any allowed orientation.',
+      })
+    );
+    return;
+  }
+
+  host.appendChild(rowKV('Header clearance', fmtInches(fit.headerClearance)));
+  host.appendChild(rowKV('Jamb clearance', fmtInches(fit.jambClearance)));
+
+  const how = fit.requiresTip
+    ? 'must be tipped on its side to pass'
+    : fit.requiresRotate
+      ? 'must be rotated 90° to pass'
+      : 'passes as oriented';
+  host.appendChild(
+    el('div', {
+      class: 'sub',
+      style: fit.requiresTip || fit.requiresRotate ? 'color:var(--warn)' : '',
+      text: `Entry: ${how}.`,
+    })
+  );
 }
 
 export function renderStaging(staging, handlers) {

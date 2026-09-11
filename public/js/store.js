@@ -22,6 +22,10 @@ export const state = {
   pendingViewVisible: false,
   // Snap dragged/nudged items to the 1" viewer grid (see cargo.js GRID_SIZE_FT).
   snapToGridEnabled: true,
+  // Show the door/jamb overlay: the clear opening, the blocked jamb/header
+  // area, and the entry envelope reachable through it. On by default — a
+  // narrowed entry is a real constraint the planner needs to see.
+  openingsVisible: true,
   dirty: false,
 };
 

@@ -17,7 +17,8 @@ export class Interaction {
   constructor(sceneMgr, callbacks) {
     this.sm = sceneMgr;
     // callbacks: { onSelect(id,{toggle}), onChange, onEdit, onDetails, onDelete,
-    //   onToggleLabels, onTogglePending, onToggleSnap, getContainerSpec,
+    //   onToggleLabels, onTogglePending, onToggleSnap, onToggleOpenings,
+    //   getContainerSpec,
     //   getSelectedId, getSelectedIds, getSnapEnabled }
     this.cb = callbacks;
     this.raycaster = new THREE.Raycaster();
@@ -369,6 +370,8 @@ export class Interaction {
       this.cb.onTogglePending();
     } else if (key === 'g') {
       this.cb.onToggleSnap();
+    } else if (key === 'd') {
+      this.cb.onToggleOpenings();
     } else if (key === 'delete' || key === 'backspace') {
       // Delete every selected item (whole multi-selection), not just primary.
       const ids = this.getSelectedIds();

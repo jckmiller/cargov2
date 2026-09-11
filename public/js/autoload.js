@@ -7,10 +7,11 @@
 //   y: vertical HEIGHT         (0 .. spec.height)
 // Placement position (x,y,z) is the item's min corner.
 
-import { getContainer } from './container.js';
+import { getContainer, getOpenings } from './container.js';
 import {
   canStack, hazmatIncompatible, uid, itemColor, overlaps3D, restingY,
 } from './cargo.js';
+import { orientationFitsOpening } from './stats.js';
 
 const EPS = 1e-6;
 
@@ -76,6 +77,33 @@ const SEED_ORDERINGS = {
 };
 
 /**
+ * Can this orientation be carried in through any of the container's openings?
+ * A box that clears the internal cross-section can still be too tall for the
+ * door header, so orientations that can't physically get inside are rejected
+ * before they're ever placed (see stats.js for the geometric check).
+ * Containers with no modeled opening never block anything.
+ */
+function passesOpening(o, spec) {
+  const openings = getOpenings(spec);
+  if (!openings.length) return true;
+  return openings.some((op) => orientationFitsOpening(o, op, spec).fits);
+}
+
+/**
+ * True when NO legal orientation of a unit can pass the container's openings —
+ * i.e. it could never be loaded, regardless of available space. Used to label
+ * staged items with an accurate reason ('door' vs. plain 'no-space').
+ */
+function doorBlocks(unit, spec) {
+  return !orientations(unit).some((o) => passesOpening(o, spec));
+}
+
+/** Reason label for a unit that ended up staged rather than placed. */
+function unplacedReason(unit, spec) {
+  return doorBlocks(unit, spec) ? 'door' : 'no-space';
+}
+
+/**
  * Core single-container greedy shelf packer. Fills space sequentially
  * (front→back, left→right, bottom→top), honoring orientation, payload, hazmat
  * segregation and stacking rules. It never mutates the incoming units (their
@@ -98,6 +126,10 @@ function packInto(units, spec, options = {}) {
   let cursorZ = 0; // along width
   let rowDepth = 0; // deepest (width) item in current row
   let currentLayer = 0; // nominal shelf pass, used for hazmat segregation grouping
+  // Units rejected solely because no legal orientation clears the door jambs.
+  // Tracked separately from ordinary "didn't fit" so the UI can explain that
+  // the item is unloadable rather than merely out of room.
+  const doorBlocked = [];
 
   function startNewRow() {
     cursorX = 0;
@@ -120,7 +152,15 @@ function packInto(units, spec, options = {}) {
     }
 
     let placed = false;
-    const oris = orientations(unit);
+    // Only consider orientations that can actually be carried in through a
+    // door/side opening. If none can, the unit is unloadable in this container
+    // no matter how much room is left — record it and move on.
+    const oris = orientations(unit).filter((o) => passesOpening(o, spec));
+    if (!oris.length) {
+      doorBlocked.push(unit);
+      remaining.push(unit);
+      continue;
+    }
 
     for (let attempt = 0; attempt < 3 && !placed; attempt++) {
       for (const o of oris) {
@@ -200,7 +240,7 @@ function packInto(units, spec, options = {}) {
   }
 
   const placed = new Set(placements.map((p) => p.__item));
-  return { placements, plan, totalWeight, placed, remaining };
+  return { placements, plan, totalWeight, placed, remaining, doorBlocked };
 }
 
 /**
@@ -273,7 +313,7 @@ export function pack(catalog, containerType, options = {}) {
   }
 
   const clean = res.placements.map(({ __item, ...p }) => ({ ...p }));
-  const unplaced = res.remaining.map((u) => ({ item: u, reason: 'no-space' }));
+  const unplaced = res.remaining.map((u) => ({ item: u, reason: unplacedReason(u, spec) }));
   const stats = buildStats(clean, unplaced, spec, res.totalWeight);
   return { placements: clean, unplaced, plan: res.plan, stats };
 }
@@ -320,7 +360,12 @@ export function packAll(catalog, options = {}) {
     remaining = res.remaining;
   }
 
-  for (const u of remaining) unplaced.push({ item: u, reason: 'no-space' });
+  for (const u of remaining) unplaced.push({ item: u, reason: unplacedReason(u, spec) });
+
+  // Items staged specifically because they can't clear the door jambs — these
+  // will never load into this container type, so the UI calls them out
+  // separately from items that merely ran out of room.
+  const doorBlockedUnits = unplaced.filter((u) => u.reason === 'door').length;
 
   return {
     containers,
@@ -330,6 +375,7 @@ export function packAll(catalog, options = {}) {
       totalUnits,
       placedUnits: totalUnits - unplaced.length,
       unplacedUnits: unplaced.length,
+      doorBlockedUnits,
       cappedByMax: remaining.length > 0 && containers.length >= maxContainers,
     },
   };

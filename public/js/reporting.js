@@ -1,6 +1,6 @@
 // Reporting: load plan generation, printable manifest & load plan, PNG export.
 // Printouts are branded deliverables (A3 · Shipping Pro — 3D Container Loading).
-import { fmtFeet, fmtInches } from './container.js';
+import { fmtFeet, fmtInches, getOpenings } from './container.js';
 import { scenarioStats, fmtLb, fmtPct, fmtFt3 } from './stats.js';
 
 // ---------------------------------------------------------------------------
@@ -13,6 +13,19 @@ const BRAND = {
   logo: '/assets/logo.png',
   accent: '#3b6fe0',
 };
+
+/**
+ * Summarize a container's clear door/jamb openings for a printout, e.g.
+ * "End doors 7' 8" W x 7' 5" H". This is the hole cargo must actually pass
+ * through — always smaller than the internal cross-section.
+ */
+function openingsSummary(spec) {
+  const openings = getOpenings(spec);
+  if (!openings.length) return null;
+  return openings
+    .map((op) => `${op.label} ${fmtFeet(op.width)} W × ${fmtFeet(op.height)} H`)
+    .join(' · ');
+}
 
 /** Human category labels look nicer title-cased on the printout. */
 function titleCase(s) {
@@ -379,6 +392,7 @@ export function manifestHTML(project, scenario, user, viewImage, viewKey = 'iso'
       ['Container Loading', scenario.name],
       ['Container', spec.name],
       ['Internal Dimensions', dims],
+      ['Clear Door Opening', openingsSummary(spec)],
       ['Payload Limit', fmtLb(spec.payloadLb)],
       ['Prepared By', user?.username || '—'],
     ])}
@@ -465,6 +479,7 @@ export function loadPlanHTML(scenario, project, user, views) {
       ['Project', project?.name || '—'],
       ['Container Loading', scenario.name],
       ['Container', spec.name],
+      ['Clear Door Opening', openingsSummary(spec)],
       ['Prepared By', user?.username || '—'],
     ])}
     ${cards}

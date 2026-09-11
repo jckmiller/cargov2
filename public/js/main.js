@@ -48,6 +48,14 @@ function initSnapToGrid() {
 }
 initSnapToGrid();
 
+// ---------- Door/jamb overlay (on by default, persisted) ----------
+const OPENINGS_KEY = 'a3_show_openings';
+function initOpenings() {
+  const saved = localStorage.getItem(OPENINGS_KEY);
+  state.openingsVisible = saved == null ? true : saved === '1';
+}
+initOpenings();
+
 // ---------- Auth ----------
 const loginOverlay = document.getElementById('login-overlay');
 const appEl = document.getElementById('app');
@@ -190,6 +198,7 @@ function initScene() {
     onToggleLabels: () => toggleLabels(),
     onTogglePending: () => togglePendingView(),
     onToggleSnap: () => toggleSnapToGrid(),
+    onToggleOpenings: () => toggleOpenings(),
     getContainerSpec: () => getContainer(activeScenario().containerType),
     getSelectedId: () => state.selectedPlacementId,
     getSelectedIds: () => state.selectedPlacementIds,
@@ -207,6 +216,9 @@ function refreshScene() {
   sm.setContainer(scn.containerType);
   sm.clearCargo();
   sm.setLabelsVisible(state.labelsVisible);
+  // setContainer() rebuilds the door-jamb overlay, so reapply the user's
+  // chosen visibility after every refresh.
+  sm.setOpeningsVisible(state.openingsVisible);
   sm.syncPlacements(scn.placements, state.selectedPlacementIds);
   sm.setPendingVisible(state.pendingViewVisible);
   if (state.pendingViewVisible) sm.setPendingItems(pendingItemsList(), spec);
@@ -433,6 +445,27 @@ function syncPendingButton() {
 }
 
 /**
+ * Toggle the door/jamb overlay: the clear opening outline + dimensions, the
+ * translucent jamb/header mask showing what's BLOCKED, and the faint entry
+ * envelope swept from the opening through the container. Persisted like the
+ * theme and snap-to-grid preferences.
+ */
+function toggleOpenings() {
+  state.openingsVisible = !state.openingsVisible;
+  localStorage.setItem(OPENINGS_KEY, state.openingsVisible ? '1' : '0');
+  sm.setOpeningsVisible(state.openingsVisible);
+  syncOpeningsButton();
+}
+
+/** Reflect the current door-jamb overlay visibility on the toggle button. */
+function syncOpeningsButton() {
+  const btn = document.getElementById('btn-toggle-openings');
+  if (!btn) return;
+  btn.classList.toggle('active', state.openingsVisible);
+  btn.setAttribute('aria-pressed', String(state.openingsVisible));
+}
+
+/**
  * Toggle the Measure tool: click two points in the scene (item ↔ wall, item
  * ↔ roof, or any point A to point B) to read the distance between them.
  * Suspends normal drag/select interaction while active (see Interaction's
@@ -642,9 +675,14 @@ function wireToolbar() {
       if (firstId) state.activeScenarioId = firstId;
       markDirty(); renderAll();
 
-      const { containerCount, placedUnits, totalUnits, cappedByMax } = result.summary;
+      const {
+        containerCount, placedUnits, totalUnits, cappedByMax, doorBlockedUnits,
+      } = result.summary;
       let msg = `${placedUnits}/${totalUnits} items across ${containerCount} container${containerCount > 1 ? 's' : ''}`;
       if (result.unplaced.length) msg += ` · ${result.unplaced.length} staged`;
+      // Call out door-blocked items explicitly: they're not a space problem,
+      // they physically can't pass the jambs of this container type.
+      if (doorBlockedUnits) msg += ` (${doorBlockedUnits} won't clear the door)`;
       toast(msg, cappedByMax || result.unplaced.length ? 'warn' : 'ok');
     });
   });
@@ -655,6 +693,8 @@ function wireToolbar() {
   syncPendingButton();
   document.getElementById('btn-toggle-snap').addEventListener('click', toggleSnapToGrid);
   syncSnapButton();
+  document.getElementById('btn-toggle-openings').addEventListener('click', toggleOpenings);
+  syncOpeningsButton();
   document.getElementById('btn-rotate').addEventListener('click', () => interaction.onKey({ key: 'r', target: {} }));
   document.getElementById('btn-tip').addEventListener('click', () => interaction.onKey({ key: 't', target: {} }));
   document.getElementById('btn-delete').addEventListener('click', () => {

@@ -2,7 +2,7 @@
 // and cargo mesh management. Scene units = feet.
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { getContainer } from './container.js';
+import { getContainer, getOpenings, openingBounds, fmtFeet } from './container.js';
 import { makeLabelMeshes, makeTagSprite } from './labels.js';
 
 export class SceneManager {
@@ -90,11 +90,17 @@ export class SceneManager {
     // whenever the container geometry changes in setContainer().
     this.boundaryGroup = new THREE.Group();
     this.boundaryGroup.visible = false;
+    // Door/jamb opening overlay: the jamb mask (what's BLOCKED), the clear
+    // opening outline + dimension label, and the entry envelope (the volume
+    // reachable through the opening). Visible by default — it's a constraint,
+    // not decoration. Rebuilt by buildOpenings() on every setContainer().
+    this.openingGroup = new THREE.Group();
+    this.openingsVisible = true;
     // Measurement markers/lines drawn by the Measure tool (see measure.js).
     this.measureGroup = new THREE.Group();
     this.scene.add(
       this.containerGroup, this.cargoGroup, this.pendingGroup,
-      this.boundaryGroup, this.measureGroup
+      this.openingGroup, this.boundaryGroup, this.measureGroup
     );
 
     this._raf = null;
@@ -174,6 +180,132 @@ export class SceneManager {
     }
 
     this.rebuildBoundaryPlanes(L, W, H);
+    this.buildOpenings(spec);
+  }
+
+  /**
+   * Visualize each door/jamb opening in three layers, so a planner can see at
+   * a glance that the hole is smaller than the box:
+   *
+   *  1. JAMB MASK — translucent amber strips over the part of the face that is
+   *     BLOCKED: the header band across the top plus the two side-jamb
+   *     slivers. Drawing the obstruction (rather than just outlining the hole)
+   *     is what makes the lost headroom read as a physical lintel.
+   *  2. CLEAR OPENING — a bright outline of the usable hole, with a floating
+   *     dimension label ("End doors — 7' 8" W x 7' 5" H clear").
+   *  3. ENTRY ENVELOPE — a very faint volume swept from the opening straight
+   *     through the container. Cargo sitting outside this volume could never
+   *     have been carried in through the door.
+   */
+  buildOpenings(spec) {
+    this.disposeGroupContents(this.openingGroup);
+    this.openingGroup.clear();
+    this.openingGroup.visible = this.openingsVisible;
+
+    const { length: L, width: W, height: H } = spec;
+    const OFF = 0.02; // nudge off the face to avoid z-fighting with the wireframe
+
+    for (const opening of getOpenings(spec)) {
+      const b = openingBounds(spec, opening);
+      const endFace = b.axis === 'x';
+      // Face-local horizontal axis: z for an end opening, x for a side one.
+      const faceSpan = endFace ? W : L;
+      // Push the overlay slightly INTO the container from its face.
+      const facePos = b.plane + OFF * b.inward;
+
+      // Place a rect given face-local bounds [s0,s1] x [y0,y1].
+      const addRect = (s0, s1, y0, y1, material) => {
+        const w = Math.abs(s1 - s0);
+        const h = Math.abs(y1 - y0);
+        if (w <= 1e-6 || h <= 1e-6) return null;
+        const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), material);
+        const sMid = (s0 + s1) / 2;
+        const yMid = (y0 + y1) / 2;
+        if (endFace) {
+          mesh.position.set(facePos, yMid, sMid);
+          mesh.rotation.y = Math.PI / 2;
+        } else {
+          mesh.position.set(sMid, yMid, facePos);
+        }
+        this.openingGroup.add(mesh);
+        return mesh;
+      };
+
+      // --- 1. Jamb mask: the blocked area around the clear opening. ---
+      const maskMat = new THREE.MeshBasicMaterial({
+        color: 0xffc15c,
+        transparent: true,
+        opacity: 0.32,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      });
+      // Header band (above the opening) — the headroom you actually lose.
+      addRect(0, faceSpan, b.yHi, H, maskMat);
+      // Sill band (below the opening), when the opening doesn't start at the floor.
+      addRect(0, faceSpan, 0, b.yLo, maskMat);
+      // Side jambs (left/right of the opening).
+      addRect(0, b.spanLo, b.yLo, b.yHi, maskMat);
+      addRect(b.spanHi, faceSpan, b.yLo, b.yHi, maskMat);
+
+      // --- 2. Clear opening outline + dimension label. ---
+      const outlineGeo = new THREE.BufferGeometry();
+      const corners = endFace
+        ? [
+            [facePos, b.yLo, b.spanLo], [facePos, b.yLo, b.spanHi],
+            [facePos, b.yHi, b.spanHi], [facePos, b.yHi, b.spanLo],
+          ]
+        : [
+            [b.spanLo, b.yLo, facePos], [b.spanHi, b.yLo, facePos],
+            [b.spanHi, b.yHi, facePos], [b.spanLo, b.yHi, facePos],
+          ];
+      const pts = [];
+      for (let i = 0; i < 4; i++) {
+        pts.push(...corners[i], ...corners[(i + 1) % 4]);
+      }
+      outlineGeo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+      this.openingGroup.add(new THREE.LineSegments(
+        outlineGeo,
+        new THREE.LineBasicMaterial({ color: 0xffa726 })
+      ));
+
+      const label = makeTagSprite(
+        `${opening.label} — ${fmtFeet(b.width)} W × ${fmtFeet(b.height)} H clear`,
+        '#ffa726'
+      );
+      // Float the label just outside the opening, centered on it.
+      const labelOut = b.plane - 1.2 * b.inward;
+      const sMid = (b.spanLo + b.spanHi) / 2;
+      if (endFace) label.position.set(labelOut, b.yHi + 0.9, sMid);
+      else label.position.set(sMid, b.yHi + 0.9, labelOut);
+      this.openingGroup.add(label);
+
+      // --- 3. Entry envelope: the opening swept through the container. ---
+      const depth = endFace ? L : W;
+      const envGeo = new THREE.BoxGeometry(
+        endFace ? depth : b.width,
+        b.height,
+        endFace ? b.width : depth
+      );
+      const env = new THREE.Mesh(envGeo, new THREE.MeshBasicMaterial({
+        color: 0xffa726,
+        transparent: true,
+        opacity: 0.05,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      }));
+      const envMid = b.plane + (depth / 2) * b.inward;
+      const yMid = (b.yLo + b.yHi) / 2;
+      if (endFace) env.position.set(envMid, yMid, sMid);
+      else env.position.set(sMid, yMid, envMid);
+      env.name = 'entry-envelope';
+      this.openingGroup.add(env);
+    }
+  }
+
+  /** Show/hide the door-jamb overlay (jamb mask, outline, entry envelope). */
+  setOpeningsVisible(v) {
+    this.openingsVisible = v;
+    this.openingGroup.visible = v;
   }
 
   /**

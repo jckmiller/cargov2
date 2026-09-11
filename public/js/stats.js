@@ -1,5 +1,6 @@
 // Compute real-time statistics for a scenario.
-import { getContainer } from './container.js';
+import { getContainer, getOpenings } from './container.js';
+import { placementOrientations } from './cargo.js';
 
 // Rule-of-thumb balance threshold: no more than this % of total cargo weight
 // should occupy one half (50%) of the container along a given axis.
@@ -273,6 +274,112 @@ export function placementClearances(p, spec) {
     floor: Math.max(0, y),
     roof: Math.max(0, spec.height - (y + (d.h || 0))),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Door / jamb pass-through checks
+//
+// A container is a few inches taller inside than the opening it gets loaded
+// through, so an item can "fit the container" and still be impossible to get
+// in. These helpers answer the purely GEOMETRIC question: presented squarely
+// to the opening, does the box's cross-section clear the jambs and header?
+//
+// Deliberately NOT a forklift/crane kinematics simulation — no tilting,
+// swinging or diagonal insertion is modeled. It's a conservative, explainable
+// check that catches the common "won't go through the door" mistake.
+// ---------------------------------------------------------------------------
+
+const DOOR_EPS = 1e-6;
+
+/**
+ * Which two of an orientation's dimensions form the cross-section presented
+ * to an opening. Cargo travels along the opening's `axis`, so the face that
+ * has to clear the hole is made of the other two dimensions:
+ *   end opening  (axis 'x'): width (w) across the jambs, height (h) under the header
+ *   side opening (axis 'z'): length (l) across the jambs, height (h) under the header
+ */
+function crossSection(o, axis) {
+  return axis === 'x' ? { across: o.w, tall: o.h } : { across: o.l, tall: o.h };
+}
+
+/**
+ * Does a single orientation `o` ({l, w, h} in feet) pass through `opening`?
+ * Returns the clearances so callers can show how tight it is.
+ */
+export function orientationFitsOpening(o, opening, spec) {
+  const endFace = opening.face === 'front' || opening.face === 'back';
+  const { across, tall } = crossSection(o, endFace ? 'x' : 'z');
+  const maxW = Math.min(opening.width, endFace ? spec.width : spec.length);
+  const maxH = Math.min(opening.height, spec.height - (opening.sill || 0));
+  return {
+    fits: across <= maxW + DOOR_EPS && tall <= maxH + DOOR_EPS,
+    jambClearance: maxW - across,
+    headerClearance: maxH - tall,
+  };
+}
+
+/**
+ * Can a box of `dims` get through ANY of the container's openings?
+ *
+ * Tries every legal orientation (honoring the catalog item's `noTip` flag via
+ * placementOrientations, so an item that mustn't be laid on its side is never
+ * credited with the tipped orientation it can't actually use). Picks the
+ * orientation with the most header clearance among those that fit, since
+ * headroom is the binding constraint on every container type here.
+ *
+ * @returns {{ fits, opening, orientation, headerClearance, jambClearance,
+ *             hasOpenings, requiresRotate, requiresTip }}
+ */
+export function doorFit(dims, spec, options = {}) {
+  const openings = getOpenings(spec);
+  const noTip = !!(options.noTip ?? options.item?.noTip);
+  const base = {
+    fits: false, opening: null, orientation: null,
+    headerClearance: 0, jambClearance: 0,
+    hasOpenings: openings.length > 0,
+    requiresRotate: false, requiresTip: false,
+  };
+  // A container with no modeled opening can't constrain anything — treat it
+  // as open rather than blocking every item.
+  if (!openings.length) return { ...base, fits: true };
+
+  let best = null;
+  for (const opening of openings) {
+    for (const o of placementOrientations(dims, { noTip })) {
+      const r = orientationFitsOpening(o, opening, spec);
+      if (!r.fits) continue;
+      if (!best || r.headerClearance > best.headerClearance) {
+        best = {
+          ...base,
+          fits: true,
+          opening,
+          orientation: o,
+          headerClearance: r.headerClearance,
+          jambClearance: r.jambClearance,
+          requiresRotate: !!o.rot,
+          requiresTip: !!o.tipped,
+        };
+      }
+    }
+  }
+  return best || base;
+}
+
+/**
+ * Placements in a scenario whose item could never have been carried in
+ * through an opening, each with the tightest dimension called out. Used to
+ * flag loads that are geometrically packed but physically unloadable.
+ */
+export function passThroughViolations(scenario, spec) {
+  const out = [];
+  for (const p of scenario.placements || []) {
+    // Check the item's intrinsic size (its own dims as placed) — a placement
+    // already reflects the orientation chosen, but the item could be re-turned
+    // on the way in, so doorFit re-examines every legal orientation.
+    const fit = doorFit(p.dims, spec, { noTip: p.rot?.noTip });
+    if (!fit.fits) out.push({ placement: p, fit });
+  }
+  return out;
 }
 
 export function fmtLb(n) {
