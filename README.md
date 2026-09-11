@@ -80,15 +80,50 @@ the database is empty and `ADMIN_PASSWORD` is not provided.
   the inventory is placed (or a configurable **Max containers** cap is hit).
   Auto-load appends new container loadings and only packs inventory that hasn't
   already been placed.
-- **Best-fill selection:** for each container it tries several arrival orderings
-  (heaviest-first, densest, largest-volume, largest-footprint, tallest) and
-  keeps the packing that fills the box best — so it "picks through" the catalog
-  to choose the ideal mix of dims/weights for the container in front of it.
+- **Scored multi-simulation search:** rather than packing once and presenting
+  the result, the engine simulates *many* layouts per container and proposes the
+  highest-scoring one. It varies three things independently:
+  1. **Arrival order** — five deterministic orderings (heaviest-first, densest,
+     largest-volume, largest-footprint, tallest) plus randomized jitters around
+     the strategy's natural ordering.
+  2. **Rotation strategy** — every simulation picks an orientation bias
+     (`upright` / `flat` / `tight`), so different runs genuinely make different
+     rotate/tip choices instead of replaying one greedy preference.
+  3. **Packing priority** — each search depth is run both letting balance win
+     freely and requiring containers be packed nearly full, producing
+     balance-oriented and consolidation-oriented plans.
+- **Every layout is scored** on the metrics that matter, each normalized to
+  0–1 and read from the same `scenarioStats()` model the Balance panel shows,
+  so the score and the on-screen numbers can never disagree:
+
+  | Component | Meaning |
+  | --- | --- |
+  | Front/back balance | 1.0 at a perfect 50/50 split along the length |
+  | Left/right balance | 1.0 at a perfect 50/50 split across the width |
+  | Floor/roof balance | asymmetric — floor-heavy is rewarded, top-heavy penalized |
+  | Number of items | share of the offered units actually loaded |
+  | Fill | volume + payload utilization (tiebreaker) |
+
+  Weights are **per strategy** (`SCORE_WEIGHTS`): *Balanced* puts 70% on the
+  three balance axes, while *Maximize volume* / *Fewest containers* lean on item
+  count and fill. Any layout breaching the >60%-in-one-half guideline is
+  heavily penalized, so the engine won't propose a load the UI would flag.
+- **Whole-plan selection:** because a locally-perfect container can leave an
+  awkward remainder that needs an extra box, several *complete* multi-container
+  plans are built and compared as wholes — on cargo placed, mean layout score,
+  and a penalty per additional container. The proposed plan is the one with the
+  best aggregate, not a chain of locally-greedy choices.
+- **Deterministic & bounded:** a seeded PRNG means identical inputs always give
+  an identical plan, and a run-wide time budget stops the search gracefully
+  (keeping the best complete plan found) so a big catalog never freezes the tab.
+  The **Simulations** field in the dialog controls search depth.
 - Default strategy: **Balanced (space + weight safety)** — bottom-heavy,
   densest first, stays under payload, recentres the load and evens out the
   center of gravity; honors stacking + hazmat rules.
 - Also: **Maximize volume** and **Fewest containers** strategies.
 - Items that fit no container (e.g. oversized) are sent to the staging area.
+- The winning layout's score and per-axis balance are shown in the result toast
+  and in the **Shipment summary** table.
 
 ### Shipment summary
 - Cross-container roll-up: per-container stats (weight, volume %, item counts,

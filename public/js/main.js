@@ -628,7 +628,7 @@ function wireToolbar() {
   });
   document.getElementById('btn-autoload').addEventListener('click', () => {
     const scn = activeScenario();
-    autoloadForm(scn.containerType, ({ containerType, strategy, maxContainers }) => {
+    autoloadForm(scn.containerType, ({ containerType, strategy, maxContainers, simulations }) => {
       // Pack only what's left in the shared shipment inventory (append mode):
       // each container loading already consumed its units, so auto-load fills
       // fresh containers from the remaining pool without double-counting.
@@ -642,7 +642,7 @@ function wireToolbar() {
       }
 
       const result = packAll(remainingCatalog, {
-        containerType, strategy, maxContainers,
+        containerType, strategy, maxContainers, simulations,
       });
 
       if (!result.containers.length) {
@@ -659,6 +659,10 @@ function wireToolbar() {
         const s = makeScenario(label, c.containerType);
         s.placements = c.placements;
         s.generatedBy = strategy;
+        // Keep the winning simulation's score with the loading so the shipment
+        // summary can show how (and how well) this layout was chosen. Rides
+        // inside the existing project JSON blob — no schema change.
+        s.loadScore = c.score;
         state.project.scenarios.push(s);
         if (i === 0) firstId = s.id;
       });
@@ -677,13 +681,25 @@ function wireToolbar() {
 
       const {
         containerCount, placedUnits, totalUnits, cappedByMax, doorBlockedUnits,
+        simulationsRun, bestScore, plansEvaluated, balanceBreaches,
       } = result.summary;
       let msg = `${placedUnits}/${totalUnits} items across ${containerCount} container${containerCount > 1 ? 's' : ''}`;
+      // Show that the plan is the winner of a scored search, not a single try.
+      if (simulationsRun) {
+        msg += ` · best of ${plansEvaluated} plans / ${simulationsRun} layouts` +
+          ` (balance+fit score ${(bestScore * 100).toFixed(0)}/100)`;
+      }
       if (result.unplaced.length) msg += ` · ${result.unplaced.length} staged`;
       // Call out door-blocked items explicitly: they're not a space problem,
       // they physically can't pass the jambs of this container type.
       if (doorBlockedUnits) msg += ` (${doorBlockedUnits} won't clear the door)`;
-      toast(msg, cappedByMax || result.unplaced.length ? 'warn' : 'ok');
+      // If even the best plan still breaches the >60%-in-one-half guideline,
+      // say so — the Balance panel will be showing a warning too.
+      if (balanceBreaches) {
+        msg += ` · ⚠ ${balanceBreaches} balance warning${balanceBreaches > 1 ? 's' : ''}`;
+      }
+      toast(msg,
+        cappedByMax || result.unplaced.length || balanceBreaches ? 'warn' : 'ok');
     });
   });
 

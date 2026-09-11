@@ -2,7 +2,7 @@
 import { el, openModal, toast, confirmDialog } from './ui.js';
 import { CATEGORIES, HAZMAT_CLASSES, makeCatalogItem } from './cargo.js';
 import { CONTAINER_TYPES, getContainer } from './container.js';
-import { STRATEGIES, DEFAULT_MAX_CONTAINERS } from './autoload.js';
+import { STRATEGIES, DEFAULT_MAX_CONTAINERS, DEFAULT_SIMULATIONS } from './autoload.js';
 import { scenarioStats, fmtLb, fmtPct, fmtFt3 } from './stats.js';
 import { saveCustomPreset } from './library.js';
 import { loadPlanHTML, manifestHTML, reportDocument, printLoadPlan, printManifest } from './reporting.js';
@@ -165,7 +165,7 @@ export function catalogImportForm(onImport) {
 
 /**
  * Auto-load options dialog.
- * onGenerate({ containerType, strategy, maxContainers }).
+ * onGenerate({ containerType, strategy, maxContainers, simulations }).
  */
 export function autoloadForm(currentContainer, onGenerate) {
   const contSel = el(
@@ -187,6 +187,16 @@ export function autoloadForm(currentContainer, onGenerate) {
     step: '1',
     value: String(DEFAULT_MAX_CONTAINERS),
   });
+  const simInput = el('input', {
+    type: 'number',
+    min: '1',
+    max: '200',
+    step: '1',
+    value: String(DEFAULT_SIMULATIONS),
+    title:
+      'How many randomized layouts to simulate and score per container. ' +
+      'Higher explores more options but takes longer.',
+  });
   openModal((close) =>
     el('div', {}, [
       el('p', {
@@ -196,10 +206,19 @@ export function autoloadForm(currentContainer, onGenerate) {
           'as needed: it packs one container as full as possible, locks it as its ' +
           'own container loading, then loads the remaining items into the next.',
       }),
+      el('p', {
+        class: 'muted small',
+        text:
+          'Each container is packed many times over — varying the order items ' +
+          'arrive and how they are rotated — and every layout is scored on ' +
+          'front/back, left/right and floor/roof weight balance plus the number ' +
+          'of items loaded. The highest-scoring layout is the one proposed.',
+      }),
       el('div', { class: 'form-grid' }, [
         el('label', {}, ['Container', contSel]),
         el('label', {}, ['Strategy', stratSel]),
         el('label', {}, ['Max containers', maxInput]),
+        el('label', {}, ['Simulations', simInput]),
       ]),
       el('div', { class: 'modal-actions' }, [
         el('button', { class: 'btn', text: 'Cancel', onClick: close }),
@@ -211,10 +230,15 @@ export function autoloadForm(currentContainer, onGenerate) {
               1,
               Math.floor(Number(maxInput.value) || DEFAULT_MAX_CONTAINERS)
             );
+            const simulations = Math.max(
+              1,
+              Math.min(200, Math.floor(Number(simInput.value) || DEFAULT_SIMULATIONS))
+            );
             onGenerate({
               containerType: contSel.value,
               strategy: stratSel.value,
               maxContainers,
+              simulations,
             });
             close();
           },
@@ -486,6 +510,29 @@ export function compareModal(project, activeId, onSwitch) {
     row('Volume used', (st) => `${fmtFt3(st.usedVolume)} (${fmtPct(st.volumePct)})`,
       `${fmtFt3(totals.usedVolume)} (${fmtPct(totalVolPct)})`),
     row('Hazmat items', (st) => String(st.hazmatCount), String(totals.hazmatCount)),
+    // Balance read-out per axis, straight from the same scenarioStats() model
+    // the Balance panel and the auto-load scorer use.
+    row('Front / Back',
+      (st) => `${fmtPct(st.balance.length.frontPct)} / ${fmtPct(st.balance.length.backPct)}`,
+      '—'),
+    row('Left / Right',
+      (st) => `${fmtPct(st.balance.width.leftPct)} / ${fmtPct(st.balance.width.rightPct)}`,
+      '—'),
+    row('Floor / Roof',
+      (st) => (st.balance.height
+        ? `${fmtPct(st.balance.height.floorPct)} / ${fmtPct(st.balance.height.roofPct)}`
+        : '—'),
+      '—'),
+    // Auto-generated loadings carry the aggregate score of the winning
+    // simulation; manually-built ones have none.
+    row('Load score',
+      (_st, s) => (s.loadScore ? `${(s.loadScore.total * 100).toFixed(0)} / 100` : '—'),
+      (() => {
+        const scored = containers.filter((s) => s.loadScore);
+        if (!scored.length) return '—';
+        const avg = scored.reduce((sum, s) => sum + s.loadScore.total, 0) / scored.length;
+        return `${(avg * 100).toFixed(0)} / 100 avg`;
+      })()),
   ]);
 
   // Inventory reconciliation: total available vs. placed across all containers
