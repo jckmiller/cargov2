@@ -18,6 +18,19 @@ test('layout validation rejects floating cargo, overlaps, out-of-bounds and lost
   assert.match(cargo.layoutError([box('wide', 0, 0, { l: 2, w: 10, h: 2 })], spec), /outside/);
   assert.match(cargo.layoutError([box('base'), box('top', 1, 2)], spec), /unsupported/);
 });
+test('removal is blocked only when it strands cargo, not by unrelated pre-existing issues', () => {
+  const spec = getContainer('20STD');
+  // Removing the base strands the stacked item: blocked with a useful message.
+  const stacked = [box('base'), box('top', 0, 2)];
+  assert.match(cargo.removalError(stacked, 'base', spec), /"top" would be unsupported/);
+  // Removing an unrelated item from a valid layout is fine.
+  assert.equal(cargo.removalError([...stacked, box('far', 6)], 'far', spec), null);
+  // A pre-existing floating item must not block removing an unrelated item.
+  const legacy = [box('ghost', 0, 2), box('unrelated', 6)];
+  assert.equal(cargo.removalError(legacy, 'unrelated', spec), null);
+  // Removing the pre-existing problematic item itself is allowed too.
+  assert.equal(cargo.removalError(legacy, 'ghost', spec), null);
+});
 test('project validation rejects over-allocation, orphan placements and malformed imports', () => {
   const p = newProject();
   p.catalog = [cargo.makeCatalogItem({ id: 'cat', qtyAvailable: 1 })];

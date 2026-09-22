@@ -7,7 +7,7 @@ import {
 import { SceneManager } from './scene.js';
 import { Interaction } from './interaction.js';
 import { getContainer, CONTAINER_TYPES } from './container.js';
-import { makeCatalogItem, uid, itemColor, findFreePlacementAnyOrientation, layoutError } from './cargo.js';
+import { makeCatalogItem, uid, itemColor, findFreePlacementAnyOrientation, layoutError, removalError } from './cargo.js';
 import { createProjectSaver } from './persistence.js';
 import { validateProjectData } from './projectValidation.js';
 import { startPacking } from './packingJob.js';
@@ -398,7 +398,11 @@ function removePlacement(id) {
   const scn = activeScenario();
   const idx = scn.placements.findIndex((x) => x.id === id);
   if (idx < 0) return;
-  const error = layoutError(scn.placements.filter((p) => p.id !== id), getContainer(scn.containerType), catalogItem);
+  const spec = getContainer(scn.containerType);
+  // Block only when the removal itself introduces a new problem (e.g. strands
+  // cargo the item was supporting); pre-existing layout issues elsewhere must
+  // not prevent deleting an unrelated item.
+  const error = removalError(scn.placements, id, spec, catalogItem);
   if (error) { toast(error, 'warn'); return; }
   staging.push(scn.placements[idx]);
   scn.placements.splice(idx, 1);

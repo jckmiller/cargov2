@@ -382,6 +382,18 @@ export function fitsOpening(dims, spec) {
   });
 }
 
+/**
+ * Error introduced by removing placement `removedId`, or null if removal is
+ * safe. Compares the layout validation before and after the removal and only
+ * reports NEW problems (e.g. cargo the removed item was supporting), so that
+ * pre-existing layout issues elsewhere cannot block deleting an unrelated item.
+ */
+export function removalError(placements, removedId, spec, lookup = () => null) {
+  const before = layoutError(placements, spec, lookup);
+  const after = layoutError(placements.filter((p) => p.id !== removedId), spec, lookup);
+  return after && after !== before ? after : null;
+}
+
 /** Validate the whole candidate layout, including cargo supported by moved items. */
 export function layoutError(placements, spec, lookup = () => null) {
   let weight = 0;
