@@ -36,6 +36,11 @@ export class Interaction {
     window.addEventListener('keydown', (e) => this.onKey(e));
   }
 
+  /** True unless the caller restricts the session to view-only (Viewer role). */
+  editAllowed() {
+    return !this.cb.canEdit || this.cb.canEdit();
+  }
+
   setPointer(e) {
     const rect = this.sm.renderer.domElement.getBoundingClientRect();
     this.pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
@@ -68,6 +73,14 @@ export class Interaction {
     const scenario = activeScenario();
     const placement = scenario?.placements.find((p) => p.id === id);
     if (!placement) return;
+
+    // View-only mode: allow click/Shift-click selection (for clearances and
+    // item details) but never begin a drag.
+    if (!this.editAllowed()) {
+      this.cb.onSelect(id, { toggle: e.shiftKey });
+      return;
+    }
+
     this.sm.renderer.domElement.setPointerCapture(e.pointerId);
 
     const currentSet = this.getSelectedIds();
@@ -344,14 +357,27 @@ export class Interaction {
     // "left/right/up/down" always match what the user sees on screen.
     const NUDGE = { arrowleft: 'left', arrowright: 'right', arrowup: 'forward', arrowdown: 'back', pageup: 'up', pagedown: 'down' };
     if (NUDGE[key]) {
-      if (!p) return;
+      if (!p || !this.editAllowed()) return;
       e.preventDefault();
       const step = (e.altKey ? 6 : 1) / 12; // feet (6" coarse, 1" fine)
       this.nudgeByView(NUDGE[key], step);
       return;
     }
 
-    if (key === 'r' && p) {
+    // View toggles stay available in view-only mode; the mutating shortcuts
+    // (rotate/tip/edit/delete) are gated by editAllowed() below.
+    if (key === 'l') {
+      this.cb.onToggleLabels();
+    } else if (key === 'p') {
+      this.cb.onTogglePending();
+    } else if (key === 'g') {
+      this.cb.onToggleSnap();
+    } else if (key === 'd') {
+      this.cb.onToggleOpenings();
+    } else if (!this.editAllowed()) {
+      // Mutating shortcut (R/T/E/Delete) in view-only mode: ignore.
+      return;
+    } else if (key === 'r' && p) {
       this.transformPlacement(p, (d) => ({
         dims: { l: d.w, w: d.l, h: d.h },
         rot: { ...(p.rot || {}), rot: ((p.rot?.rot || 0) + 90) % 360 },
@@ -370,14 +396,6 @@ export class Interaction {
       }
     } else if (key === 'e' && p) {
       this.cb.onEdit(id);
-    } else if (key === 'l') {
-      this.cb.onToggleLabels();
-    } else if (key === 'p') {
-      this.cb.onTogglePending();
-    } else if (key === 'g') {
-      this.cb.onToggleSnap();
-    } else if (key === 'd') {
-      this.cb.onToggleOpenings();
     } else if (key === 'delete' || key === 'backspace') {
       // Delete every selected item (whole multi-selection), not just primary.
       const ids = [...this.getSelectedIds()].sort((a, b) =>
@@ -455,6 +473,7 @@ export class Interaction {
    * refresh.
    */
   nudgeSelected({ dx = 0, dy = 0, dz = 0 } = {}) {
+    if (!this.editAllowed()) return;
     const scenario = activeScenario();
     if (!scenario) return;
     const ids = this.getSelectedIds();
@@ -516,6 +535,7 @@ export class Interaction {
    * overlap any other item; otherwise it snaps back to the original pose.
    */
   transformPlacement(p, makeChange, label) {
+    if (!this.editAllowed()) return;
     const prev = {
       dims: { ...p.dims },
       rot: { ...(p.rot || {}) },

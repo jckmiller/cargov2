@@ -31,6 +31,11 @@ function setProject(project) {
   setStoreProject(project);
   staging = project.staging;
 }
+/** True when the signed-in user has the view-only Viewer role. */
+function isViewer() {
+  return state.user?.role === 'viewer';
+}
+
 function mayDiscardChanges() {
   return !state.dirty || window.confirm('Discard unsaved changes? Cancel to save or export them first.');
 }
@@ -122,6 +127,7 @@ function enterApp() {
   if (state.user.role === 'admin') {
     document.getElementById('btn-admin').classList.remove('hidden');
   }
+  if (isViewer()) applyViewerRestrictions();
 
   initScene();
   wireToolbar();
@@ -133,6 +139,29 @@ function enterApp() {
   setProject(newProject('My First Project'));
   renderAll();
   toast(`Welcome, ${state.user.username}`, 'ok');
+}
+
+/**
+ * Lock the UI down for the Viewer role: hide every editing surface so the
+ * viewport becomes view-only. Viewers keep the Container Loadings list (to
+ * switch between loadings), the 3D viewport, stats/clearances, view toggles,
+ * the Measure tool, and reporting/exports. Item Catalog, Item Library, and
+ * the Staging Area are hidden entirely.
+ */
+function applyViewerRestrictions() {
+  const hide = (id) => document.getElementById(id)?.classList.add('hidden');
+  // Panels the Viewer has no need for.
+  for (const name of ['catalog', 'library', 'staging']) {
+    document.querySelector(`.panel[data-panel="${name}"]`)?.classList.add('hidden');
+  }
+  // Edit-only buttons.
+  for (const id of [
+    'btn-add-scenario', 'btn-autoload', 'btn-save', 'btn-import-json',
+    'btn-rotate', 'btn-tip', 'btn-delete', 'nudge-pad', 'btn-toggle-snap',
+  ]) hide(id);
+  // Switching container type is an edit; viewing the current type is not.
+  const sel = document.getElementById('container-select');
+  if (sel) sel.disabled = true;
 }
 
 // ---------- Collapse: panels + whole sidebars ----------
@@ -185,6 +214,7 @@ function initScene() {
     sel.appendChild(el('option', { value: c.id, text: c.name }));
   }
   sel.addEventListener('change', () => {
+    if (isViewer()) { sel.value = activeScenario()?.containerType || sel.value; return; }
     const scn = activeScenario();
     if (!scn) return;
     const error = layoutError(scn.placements, getContainer(sel.value), catalogItem);
@@ -206,12 +236,12 @@ function initScene() {
     onChange: () => {
       markDirty();
       renderStats(activeScenario());
-      renderScenarios(state.project, state.activeScenarioId, scenarioHandlers());
+      renderScenarios(state.project, state.activeScenarioId, scenarioHandlers(), isViewer());
       renderClearances(selectedPlacementForClearances(), getContainer(activeScenario().containerType));
     },
-    onEdit: (id) => editPlacement(id),
+    onEdit: (id) => { if (!isViewer()) editPlacement(id); },
     onDetails: (id) => showDetails(id),
-    onDelete: (id) => removePlacement(id),
+    onDelete: (id) => { if (!isViewer()) removePlacement(id); },
     onToggleLabels: () => toggleLabels(),
     onTogglePending: () => togglePendingView(),
     onToggleSnap: () => toggleSnapToGrid(),
@@ -220,6 +250,7 @@ function initScene() {
     getSelectedId: () => state.selectedPlacementId,
     getSelectedIds: () => state.selectedPlacementIds,
     getSnapEnabled: () => state.snapToGridEnabled,
+    canEdit: () => !isViewer(),
     isMeasuring: () => measure && measure.isActive(),
   });
 
@@ -267,6 +298,7 @@ function pendingItemsList() {
 }
 
 function appendCatalogItems(items) {
+  if (isViewer()) return;
   validateProjectData({ ...state.project, catalog: [...state.project.catalog, ...items] });
   state.project.catalog.push(...items);
   markDirty();
@@ -278,12 +310,14 @@ function renderAll() {
   if (!p) return;
   document.getElementById('active-project-name').textContent =
     p.name + (state.dirty ? ' *' : '') + (p.id ? '' : ' (unsaved)');
-  renderScenarios(p, state.activeScenarioId, scenarioHandlers());
-  renderCatalog(p, catalogHandlers(), activeScenario());
-  renderLibrary(libraryHandlers());
+  renderScenarios(p, state.activeScenarioId, scenarioHandlers(), isViewer());
+  if (!isViewer()) {
+    renderCatalog(p, catalogHandlers(), activeScenario());
+    renderLibrary(libraryHandlers());
+    renderStaging(staging, stagingHandlers());
+  }
   renderStats(activeScenario());
   renderClearances(selectedPlacementForClearances(), getContainer(activeScenario().containerType));
-  renderStaging(staging, stagingHandlers());
   refreshScene();
   updateNudgePad();
 }
@@ -310,6 +344,7 @@ function updateNudgePad() {
 
 // ---------- Placement helpers ----------
 function addPlacementFromCatalog(catId) {
+  if (isViewer()) return;
   const scn = activeScenario();
   const item = catalogItem(catId);
   if (!item) return;
@@ -355,6 +390,7 @@ function addPlacementFromCatalog(catId) {
 }
 
 function editPlacement(id) {
+  if (isViewer()) return;
   const scn = activeScenario();
   const p = scn.placements.find((x) => x.id === id);
   if (!p) return;
@@ -395,6 +431,7 @@ function showDetails(id) {
 }
 
 function removePlacement(id) {
+  if (isViewer()) return;
   const scn = activeScenario();
   const idx = scn.placements.findIndex((x) => x.id === id);
   if (idx < 0) return;
@@ -523,6 +560,7 @@ function scenarioHandlers() {
   return {
     select: (id) => { state.activeScenarioId = id; clearSelection(); renderAll(); },
     rename: (id) => {
+      if (isViewer()) return;
       const s = state.project.scenarios.find((x) => x.id === id);
       const input = el('input', { value: s.name });
       openModal((close) => el('div', {}, [
@@ -534,6 +572,7 @@ function scenarioHandlers() {
       ]), { title: 'Rename Container Loading' });
     },
     duplicate: (id) => {
+      if (isViewer()) return;
       if (state.project.scenarios.length >= 100) { toast('Project limit is 100 containers', 'warn'); return; }
       const s = state.project.scenarios.find((x) => x.id === id);
       const needed = new Map();
@@ -550,6 +589,7 @@ function scenarioHandlers() {
       markDirty(); renderAll();
     },
     remove: (id) => {
+      if (isViewer()) return;
       confirmDialog('Delete this container loading?', () => {
         const arr = state.project.scenarios;
         const idx = arr.findIndex((x) => x.id === id);
@@ -565,6 +605,7 @@ function catalogHandlers() {
   return {
     place: (catId) => addPlacementFromCatalog(catId),
     edit: (catId) => {
+      if (isViewer()) return;
       const item = catalogItem(catId);
       itemForm(item, (out) => {
         validateProjectData({ ...state.project, catalog: state.project.catalog.map((c) => c.id === catId ? out : c) });
@@ -572,6 +613,7 @@ function catalogHandlers() {
       });
     },
     remove: (catId) => {
+      if (isViewer()) return;
       if (placedQty(catId) > 0) { toast('Remove this item from all containers before deleting it', 'warn'); return; }
       const idx = state.project.catalog.findIndex((c) => c.id === catId);
       if (idx >= 0) state.project.catalog.splice(idx, 1);
@@ -586,19 +628,21 @@ function catalogHandlers() {
 function libraryHandlers() {
   return {
     add: (preset) => {
+      if (isViewer()) return;
       const seed = presetToCatalogItem(preset);
       itemForm(seed, (out) => {
         appendCatalogItems([out]);
         toast(`Added "${out.name}" to catalog`, 'ok');
       });
     },
-    deletePreset: (i) => { deleteCustomPreset(i); renderLibrary(libraryHandlers()); },
+    deletePreset: (i) => { if (isViewer()) return; deleteCustomPreset(i); renderLibrary(libraryHandlers()); },
   };
 }
 
 function stagingHandlers() {
   return {
     readd: (i) => {
+      if (isViewer()) return;
       const scn = activeScenario();
       const spec = getContainer(scn.containerType);
       const p = staging[i];
@@ -624,7 +668,7 @@ function stagingHandlers() {
       scn.placements.push(p);
       markDirty(); renderAll();
     },
-    discard: (i) => { staging.splice(i, 1); markDirty(); renderAll(); },
+    discard: (i) => { if (isViewer()) return; staging.splice(i, 1); markDirty(); renderAll(); },
   };
 }
 
@@ -659,6 +703,7 @@ function wireToolbar() {
     });
   });
   document.getElementById('btn-add-scenario').addEventListener('click', () => {
+    if (isViewer()) return;
     if (state.project.scenarios.length >= 100) { toast('Project limit is 100 containers', 'warn'); return; }
     const s = makeScenario(`Container ${state.project.scenarios.length + 1}`);
     state.project.scenarios.push(s);
@@ -666,6 +711,7 @@ function wireToolbar() {
     markDirty(); renderAll();
   });
   document.getElementById('btn-autoload').addEventListener('click', () => {
+    if (isViewer()) return;
     const scn = activeScenario();
     autoloadForm(scn.containerType, async ({ containerType, strategy, maxContainers, simulations }) => {
       const project = state.project;
@@ -822,7 +868,7 @@ function wireToolbar() {
   const importInput = el('input', { type: 'file', accept: 'application/json', style: 'display:none' });
   document.body.appendChild(importInput);
   importInput.addEventListener('change', async () => {
-    if (!importInput.files[0]) return;
+    if (isViewer() || !importInput.files[0]) return;
     try {
       const proj = await importProjectJSON(importInput.files[0]);
       if (mayDiscardChanges()) { setProject(proj); markDirty(); renderAll(); toast('Imported project', 'ok'); }

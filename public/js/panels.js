@@ -8,7 +8,7 @@ import {
 import { BUILTIN_GROUPS, loadCustomPresets } from './library.js';
 import { remainingQty, catalogItem } from './store.js';
 
-export function renderScenarios(project, activeId, handlers) {
+export function renderScenarios(project, activeId, handlers, readOnly = false) {
   const host = document.getElementById('container-list');
   host.innerHTML = '';
   for (const s of project.scenarios) {
@@ -22,7 +22,8 @@ export function renderScenarios(project, activeId, handlers) {
         ]),
         el('div', { class: 'sub', text:
           `${st.itemCount} items · ${fmtPct(st.volumePct)} vol · ${fmtLb(st.totalWeight)}` }),
-        el('div', { class: 'item-actions' }, [
+        // Viewers can open a loading to view it, but never rename/duplicate/delete.
+        readOnly ? null : el('div', { class: 'item-actions' }, [
           el('button', { class: 'btn small', text: 'Rename', onClick: (e) => { e.stopPropagation(); handlers.rename(s.id); } }),
           el('button', { class: 'btn small', text: 'Duplicate', onClick: (e) => { e.stopPropagation(); handlers.duplicate(s.id); } }),
           project.scenarios.length > 1
