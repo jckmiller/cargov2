@@ -372,6 +372,51 @@ export function findFreePlacementAnyOrientation(placements, spec, dims, options 
   return null;
 }
 
+/**
+ * Try to fit an item at a specific pointer spot, retrying other orientations
+ * when its current one doesn't fit there — the drag-time counterpart of
+ * `findFreePlacementAnyOrientation` (which searches the whole container).
+ *
+ * Orientations are tried current-first via `placementOrientations` (rotate 90°,
+ * then the tipped variants unless the item is `noTip`), each re-centered on the
+ * requested spot so the item stays under the pointer, clamped inside the
+ * container, and validated for collisions and (optionally) full-layout rules.
+ *
+ * @param {number} x,z   requested min-corner position (pre-snap pointer target)
+ * @param {object} options { item?, noTip?, baseLookup?, skipId?, stack?,
+ *   snapGrid?, validate?(candidate)=>error|null }
+ *   - stack:    settle onto supports via restingY instead of dropping to y=0
+ *   - skipId:   placement id to ignore as obstacle (the dragged item itself)
+ *   - validate: extra rule check; candidate is rejected when it returns truthy
+ * @returns {{x:number, y:number, z:number, dims:object, rot:{rot:number, tipped:boolean}}|null}
+ *   The pose that fit (dims/rot describe the orientation change relative to
+ *   the given `dims`), or null when no orientation fits at this spot.
+ */
+export function fitAtSpot(x, z, placements, spec, dims, options = {}) {
+  const noTip = !!(options.noTip ?? options.item?.noTip);
+  const snap = options.snapGrid ? (v) => snapToGrid(v) : (v) => v;
+  for (const o of placementOrientations(dims, { noTip })) {
+    const odims = { l: o.l, w: o.w, h: o.h };
+    // Floor drops skip restingY, so enforce the container height explicitly.
+    if (!options.stack && o.h > spec.height + COLLISION_EPS) continue;
+    // Keep the footprint CENTER at the requested spot when the orientation
+    // changes, so a reoriented item doesn't jump sideways out from under the
+    // pointer; then snap and clamp inside the container with the new dims.
+    const nx = Math.max(0, Math.min(snap(x + (dims.l - o.l) / 2), spec.length - o.l));
+    const nz = Math.max(0, Math.min(snap(z + (dims.w - o.w) / 2), spec.width - o.w));
+    let y = 0;
+    if (options.stack) {
+      y = restingY(nx, nz, odims, placements, spec, options.item, options.baseLookup, options.skipId);
+      if (y == null) continue;
+    }
+    const candidate = { id: options.skipId, x: nx, y, z: nz, dims: odims };
+    if (collidesAny(candidate, placements)) continue;
+    if (options.validate && options.validate(candidate)) continue;
+    return { x: nx, y, z: nz, dims: odims, rot: { rot: o.rot, tipped: o.tipped } };
+  }
+  return null;
+}
+
 /** Axis-aligned entry check shared by manual placement and layout validation. */
 export function fitsOpening(dims, spec) {
   const openings = getOpenings(spec);

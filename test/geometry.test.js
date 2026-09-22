@@ -78,3 +78,74 @@ test('nudge cannot create floating cargo and rotation cannot exceed bounds', () 
   control.transformPlacement(p, (d) => ({ dims: { l: d.w, w: d.l, h: d.h }, rot: { rot: 90 } }), 'rotate');
   assert.equal(p.dims.w, 2);
 });
+
+// --- Drag-time auto-reorientation (fitAtSpot + moveSingle) -----------------
+test('fitAtSpot keeps the current orientation when it fits', () => {
+  const spec = getContainer('20STD');
+  const fit = cargo.fitAtSpot(1, 1, [box('base', 6)], spec, { l: 2, w: 2, h: 2 });
+  assert.deepEqual(fit.dims, { l: 2, w: 2, h: 2 });
+  assert.deepEqual(fit.rot, { rot: 0, tipped: false });
+});
+test('fitAtSpot rotates 90° when only the rotated footprint fits', () => {
+  const spec = getContainer('20STD'); // width 7'8.5" ≈ 7.708 ft
+  // Base occupies z 0..4; the remaining strip (z 4..7.708) is ~3.708 ft wide.
+  const base = { ...box('base'), dims: { l: 4, w: 4, h: 3 } };
+  // Item A is 3 ft along length x 4 ft across width: too wide for the strip
+  // as-is, but fits when rotated to 4 x 3.
+  const fit = cargo.fitAtSpot(0, 4.2, [base], spec, { l: 3, w: 4, h: 2 });
+  assert.ok(fit, 'expected a rotated fit beside the base');
+  assert.deepEqual(fit.dims, { l: 4, w: 3, h: 2 });
+  assert.equal(fit.rot.rot, 90);
+  assert.equal(fit.rot.tipped, false);
+  assert.ok(fit.z >= 4 - 1e-6 && fit.z + 3 <= spec.width + 1e-6);
+});
+test('fitAtSpot stacks on supports only in the orientation that fits', () => {
+  const spec = getContainer('20STD');
+  // Support C occupies z 4..7.5, top at y=2. Item A (l3 x w4) overhangs C as-is
+  // (4 > 3.5 wide support) but rests fully once rotated to w=3.
+  const support = { ...box('support', 0, 0, { l: 4, w: 3.5, h: 2 }), z: 4 };
+  const opts = { stack: true, item: { category: 'general', hazmatClass: 'none' } };
+  const fit = cargo.fitAtSpot(0, 4, [support], spec, { l: 3, w: 4, h: 2 }, opts);
+  assert.ok(fit, 'expected a stacked fit after rotating');
+  assert.equal(fit.y, 2); // resting on top of the support
+  assert.deepEqual(fit.dims, { l: 4, w: 3, h: 2 });
+});
+test('fitAtSpot never tips a do-not-tip item', () => {
+  const spec = getContainer('20STD'); // internal height ~7.85 ft
+  // 9 ft tall upright only fits tipped (h becomes 2). With noTip, no fit.
+  const dims = { l: 2, w: 2, h: 9 };
+  assert.equal(cargo.fitAtSpot(0, 0, [], spec, dims, { noTip: true }), null);
+  const fit = cargo.fitAtSpot(0, 0, [], spec, dims);
+  assert.ok(fit.rot.tipped, 'without noTip the tipped variant is allowed');
+  assert.equal(fit.dims.h, 2);
+});
+test('single-item drag auto-rotates to fit beside a blocking item', () => {
+  const spec = getContainer('20STD');
+  // Item A sits on top of item B. Beside B there is no room for A's 4-ft
+  // width, but there is once A is rotated to 4 long x 3 wide.
+  const b = { ...box('b'), dims: { l: 4, w: 4, h: 3 } };
+  const a = { ...box('a', 0, 3, { l: 3, w: 4, h: 2 }) };
+  a.rot = { rot: 0, tipped: false };
+  const control = interaction([b, a]);
+  control.dragging = {
+    stackMode: false, moveSet: new Set(['a']), moved: false,
+    members: [{ placement: a, offset: { x: 0, z: 0 }, lastValid: { x: a.x, y: a.y, z: a.z } }],
+  };
+  control.moveSingle({ x: 0, z: 4.2 }); // drag A into the strip beside B
+  assert.equal(a.y, 0, 'A should drop to the floor beside B');
+  assert.deepEqual(a.dims, { l: 4, w: 3, h: 2 }, 'A should have auto-rotated 90°');
+  assert.equal(a.rot.rot, 90);
+  assert.equal(cargo.collidesAny(a, [b]), false);
+});
+test('single-item drag snaps back when no orientation fits', () => {
+  const b = box('b'); // 2x2x2 at the origin
+  const a = { ...box('a', 6, 0, { l: 2, w: 2, h: 2 }) };
+  a.rot = { rot: 0, tipped: false };
+  const control = interaction([b, a]);
+  control.dragging = {
+    stackMode: false, moveSet: new Set(['a']), moved: false,
+    members: [{ placement: a, offset: { x: 0, z: 0 }, lastValid: { x: a.x, y: a.y, z: a.z } }],
+  };
+  control.moveSingle({ x: 1, z: 1 }); // squarely onto B: no orientation fits
+  assert.deepEqual({ x: a.x, y: a.y, z: a.z }, { x: 6, y: 0, z: 0 });
+});

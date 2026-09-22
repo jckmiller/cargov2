@@ -10,7 +10,7 @@
 // the primary (last-clicked) item.
 import * as THREE from 'three';
 import { activeScenario, catalogItem } from './store.js';
-import { collidesAny, restingY, snapToGrid, layoutError } from './cargo.js';
+import { collidesAny, restingY, snapToGrid, layoutError, fitAtSpot } from './cargo.js';
 import { toast } from './ui.js';
 
 export class Interaction {
@@ -172,37 +172,39 @@ export class Interaction {
     const d = this.dragging.members[0];
     const p = d.placement;
     const spec = this.cb.getContainerSpec();
-    let nx = hit.x - d.offset.x;
-    let nz = hit.z - d.offset.z;
-    // Snap to the 1" viewer grid before clamping, so a snapped cell right at
-    // the container edge still gets pulled back inside.
-    if (this.snapEnabled()) {
-      nx = snapToGrid(nx);
-      nz = snapToGrid(nz);
-    }
-    // Clamp inside container footprint.
-    nx = Math.max(0, Math.min(nx, spec.length - p.dims.l));
-    nz = Math.max(0, Math.min(nz, spec.width - p.dims.w));
+    const x = hit.x - d.offset.x;
+    const z = hit.z - d.offset.z;
 
-    // Candidate pose at the pointer position.
-    const candidate = { id: p.id, catalogItemId: p.catalogItemId, x: nx, z: nz, dims: p.dims, y: 0 };
-    // Floor placement by default; Shift settles the item onto whatever is
-    // under the pointer (honoring stacking rules) so it can be placed on top.
-    const ny = this.dragging.stackMode ? this.computeStackY(candidate, spec) : 0;
+    // Fit the item at the pointer spot. The current orientation is tried
+    // first; if it doesn't fit there, fitAtSpot retries the item rotated 90°
+    // and tipped (unless the catalog marks it do-not-tip), re-centered on the
+    // pointer — so dragging into a gap that only fits rotated auto-reorients
+    // the item instead of rejecting the move outright.
+    const fit = fitAtSpot(x, z, activeScenario().placements, spec, p.dims, {
+      item: catalogItem(p.catalogItemId) || p,
+      baseLookup: (o) => catalogItem(o.catalogItemId) || o,
+      skipId: p.id,
+      stack: this.dragging.stackMode,
+      snapGrid: this.snapEnabled(),
+      validate: (candidate) => this.candidateError([{ ...p, ...candidate }]),
+    });
 
-    // Reject the move if the resting pose is invalid or would intersect
-    // another item; snap back to the last valid pose instead of overlapping.
-    let accepted = ny != null;
-    if (accepted) {
-      candidate.y = ny;
-      const others = activeScenario().placements;
-      if (collidesAny(candidate, others) || this.candidateError([{ ...p, ...candidate }])) accepted = false;
-    }
-
-    if (accepted) {
-      p.x = candidate.x;
-      p.z = candidate.z;
-      p.y = candidate.y;
+    if (fit) {
+      const reoriented =
+        fit.dims.l !== p.dims.l || fit.dims.w !== p.dims.w || fit.dims.h !== p.dims.h;
+      if (reoriented) {
+        // Compose the orientation change with the item's current rot metadata,
+        // matching the vocabulary rotate (R) / tip (T) already use.
+        p.rot = {
+          rot: ((p.rot?.rot || 0) + fit.rot.rot) % 360,
+          tipped: fit.rot.tipped ? !p.rot?.tipped : !!p.rot?.tipped,
+        };
+        p.dims = fit.dims;
+        toast(`${fit.rot.tipped ? 'Tipped' : 'Rotated'} "${p.name}" to fit`, 'ok');
+      }
+      p.x = fit.x;
+      p.z = fit.z;
+      p.y = fit.y;
       p.layer = p.y <= 1e-6 ? 0 : 1;
       d.lastValid = { x: p.x, y: p.y, z: p.z };
       this.dragging.moved = true;
