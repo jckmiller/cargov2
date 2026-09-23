@@ -243,7 +243,7 @@ function ySpanIntersects(a0, a1, b0, b1) {
  * piece, and check whether anything more than a sliver of floating-point
  * noise is left uncovered.
  */
-function isFullySupported(box, supports) {
+export function isFullySupported(box, supports) {
   let pieces = [{ x0: box.x, x1: box.x + box.dims.l, z0: box.z, z1: box.z + box.dims.w }];
   for (const s of supports) {
     if (!pieces.length) break;

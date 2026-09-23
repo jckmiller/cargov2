@@ -183,22 +183,99 @@ test('plain drag crosses stacked cargo: settles on the far stack tops', () => {
   assert.equal(cargo.collidesAny(c, [b, d, e, f]), false);
   assert.equal(cargo.layoutError(placements, spec), null);
 });
-test('dragging the base of a stack stays put and explains why on release', () => {
+test('dragging the base of a stack carries the cargo on top', () => {
+  const spec = getContainer('20STD');
   const b = { ...box('b', 2), dims: { l: 4, w: 7, h: 3 } };
   const c = { ...box('c', 2, 3), dims: { l: 4, w: 4, h: 2 } }; // C sits on B
+  const placements = [b, c];
+  const control = interaction(placements);
+  const carried = control.carriedDependents(placements, ['b']);
+  assert.deepEqual([...carried].sort(), ['b', 'c'], 'the tower moves together');
+  control.dragging = {
+    moveSet: carried, moved: false, isGroup: true,
+    anchor: { x: 2, z: 0 },
+    members: [b, c].map((p) => ({
+      placement: p, offset: { x: 0, z: 0 },
+      lastValid: { x: p.x, y: p.y, z: p.z }, start: { x: p.x, y: p.y, z: p.z },
+    })),
+  };
+  control.moveGroup({ x: 10, z: 0 });
+  assert.equal(b.x, 10);
+  assert.equal(b.y, 0);
+  assert.equal(c.x, 10);
+  assert.equal(c.y, 3, 'C keeps its height on top of B');
+  assert.equal(cargo.layoutError(placements, spec), null);
+});
+test('carriedDependents stacks transitively but skips independent cargo', () => {
+  const b = { ...box('b', 0), dims: { l: 4, w: 7, h: 2 } };
+  const c = { ...box('c', 0, 2), dims: { l: 4, w: 4, h: 2 } }; // on B
+  const e = { ...box('e', 0, 4), dims: { l: 2, w: 2, h: 1 } }; // on C
+  const d = { ...box('d', 8), dims: { l: 4, w: 7, h: 3 } };    // independent
+  const control = interaction([b, c, e, d]);
+  assert.deepEqual([...control.carriedDependents([b, c, e, d], ['b'])].sort(), ['b', 'c', 'e']);
+  assert.deepEqual([...control.carriedDependents([b, c, e, d], ['c'])].sort(), ['c', 'e']);
+  assert.deepEqual([...control.carriedDependents([b, c, e, d], ['d'])], ['d']);
+});
+test('cargo shared with a stationary base blocks the carry and explains why', () => {
+  const b = { ...box('b', 0), dims: { l: 4, w: 7, h: 3 } };
+  const d = { ...box('d', 4), dims: { l: 4, w: 7, h: 3 } };
+  const f = { ...box('f', 3, 3), dims: { l: 4, w: 4, h: 2 } }; // F straddles B and D
+  const msgs = [];
+  const control = interaction([b, d, f], (m, kind) => msgs.push([m, kind]));
+  const carried = control.carriedDependents([b, d, f], ['b']);
+  assert.deepEqual([...carried].sort(), ['b', 'f'], 'F needs B, so it is carried');
+  control.dragging = {
+    moveSet: carried, moved: false, isGroup: true,
+    anchor: { x: 0, z: 0 },
+    members: [b, f].map((p) => ({
+      placement: p, offset: { x: 0, z: 0 },
+      lastValid: { x: p.x, y: p.y, z: p.z }, start: { x: p.x, y: p.y, z: p.z },
+    })),
+  };
+  control.moveGroup({ x: 10, z: 0 }); // F would leave its other base D behind
+  control.onUp();
+  assert.equal(b.x, 0, 'move is rejected: F would be stranded off D');
+  assert.equal(f.x, 3);
+  assert.equal(msgs.length, 1);
+  assert.match(msgs[0][0], /"f" would be unsupported/);
+  assert.match(msgs[0][0], /Shift-click/);
+  assert.equal(msgs[0][1], 'warn');
+});
+test('a pre-existing floating item does not block unrelated drags', () => {
+  const ghost = { ...box('ghost', 0, 3) }; // legacy float: already unsupported
+  const a = { ...box('a', 6) };
+  const msgs = [];
+  const control = interaction([ghost, a], (m, kind) => msgs.push([m, kind]));
+  control.dragging = {
+    moveSet: new Set(['a']), moved: false,
+    anchor: { x: 6, z: 0 },
+    members: [{ placement: a, offset: { x: 0, z: 0 }, lastValid: { x: a.x, y: a.y, z: a.z } }],
+  };
+  for (const x of [7, 8, 9, 10]) control.moveSingle({ x, z: 0 }); // empty floor
+  control.onUp();
+  assert.equal(a.x, 10, 'unrelated item should drag freely past a pre-existing issue');
+  assert.equal(msgs.length, 0, 'no warning for a successful drag');
+});
+test('rotate is no longer blocked by a pre-existing unrelated layout error', () => {
+  const ghost = { ...box('ghost', 0, 3) }; // floating legacy item
+  const a = { ...box('a', 6, 0, { l: 4, w: 2, h: 2 }) };
+  const control = interaction([ghost, a]);
+  control.transformPlacement(a, (d) => ({
+    dims: { l: d.w, w: d.l, h: d.h }, rot: { rot: 90 },
+  }), 'rotate');
+  assert.deepEqual(a.dims, { l: 2, w: 4, h: 2 }, 'rotate should commit despite the unrelated ghost');
+});
+test('rotate that would strand supported cargo still reverts', () => {
+  const b = { ...box('b', 2), dims: { l: 6, w: 4, h: 3 } };    // spans x 2..8
+  const c = { ...box('c', 6, 3), dims: { l: 2, w: 4, h: 2 } }; // C on B's tail (x 6..8)
   const msgs = [];
   const control = interaction([b, c], (m, kind) => msgs.push([m, kind]));
-  control.dragging = {
-    moveSet: new Set(['b']), moved: false,
-    anchor: { x: 2, z: 0 },
-    members: [{ placement: b, offset: { x: 0, z: 0 }, lastValid: { x: b.x, y: b.y, z: b.z } }],
-  };
-  control.moveSingle({ x: 10, z: 0 }); // try to drag the base out from under C
-  control.onUp();
-  assert.equal(b.x, 2, 'base must not move while C sits on it');
-  assert.equal(msgs.length, 1, 'blocked drag should explain itself once');
+  control.transformPlacement(b, (d) => ({
+    dims: { l: d.w, w: d.l, h: d.h }, rot: { rot: 90 },
+  }), 'rotate'); // rotated B spans x 2..6: C loses its base
+  assert.deepEqual(b.dims, { l: 6, w: 4, h: 3 }, 'rotate must revert: C would lose support');
+  assert.equal(msgs.length, 1);
   assert.match(msgs[0][0], /"c" would be unsupported/);
-  assert.match(msgs[0][0], /Shift-click/, 'should hint at moving the whole stack');
   assert.equal(msgs[0][1], 'warn');
 });
 test('fitAtSpot reports why no orientation fits via diag', () => {

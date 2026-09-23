@@ -10,7 +10,7 @@
 // the primary (last-clicked) item.
 import * as THREE from 'three';
 import { activeScenario, catalogItem } from './store.js';
-import { collidesAny, snapToGrid, layoutError, fitAtSpot } from './cargo.js';
+import { collidesAny, canStack, overlapsXZ, isFullySupported, COLLISION_EPS, snapToGrid, layoutError, fitAtSpot } from './cargo.js';
 import { toast } from './ui.js';
 
 export class Interaction {
@@ -97,14 +97,19 @@ export class Interaction {
       this.raycaster.setFromCamera(this.pointer, this.sm.camera);
       const hit0 = new THREE.Vector3();
       this.raycaster.ray.intersectPlane(this.dragPlane, hit0);
+      // Auto-carry whatever is stacked on the item (same rigid-group mechanics
+      // as a multi-select drag), so dragging a base moves its whole tower.
+      const carryIds = this.carriedDependents(scenario.placements, [id]);
+      const carryMembers = scenario.placements.filter((p) => carryIds.has(p.id));
       this.dragging = {
-        members: [{
-          placement,
-          offset: new THREE.Vector3(hit0.x - placement.x, 0, hit0.z - placement.z),
-          lastValid: { x: placement.x, y: placement.y, z: placement.z },
-        }],
-        isGroup: false,
-        moveSet: new Set([id]),
+        members: carryMembers.map((p) => ({
+          placement: p,
+          offset: new THREE.Vector3(hit0.x - p.x, 0, hit0.z - p.z),
+          lastValid: { x: p.x, y: p.y, z: p.z },
+          start: { x: p.x, y: p.y, z: p.z },
+        })),
+        isGroup: carryMembers.length > 1,
+        moveSet: carryIds,
         anchor: new THREE.Vector3(hit0.x, 0, hit0.z),
         moved: false,
         shiftToggleId: id, // toggle selection on pointerup if no drag occurs
@@ -118,9 +123,12 @@ export class Interaction {
       this.cb.onSelect(id);
     }
 
-    // Determine the group of placements to move. A single selection moves just
-    // itself; a multi-selection moves every member together.
-    const moveIds = inMultiSelection ? this.getSelectedIds() : [id];
+    // Determine the group of placements to move. A multi-selection moves every
+    // member together; a single item moves itself and auto-carries whatever is
+    // stacked on top of it (same rigid-group mechanics).
+    const moveIds = inMultiSelection
+      ? this.getSelectedIds()
+      : [...this.carriedDependents(scenario.placements, [id])];
     const members = moveIds
       .map((mid) => scenario.placements.find((p) => p.id === mid))
       .filter(Boolean);
@@ -255,6 +263,12 @@ export class Interaction {
     const spec = this.cb.getContainerSpec();
     const members = this.dragging.members;
 
+    // Distinguish a real drag attempt from a plain click (same as moveSingle).
+    const anchor = this.dragging.anchor;
+    if (anchor && Math.hypot(hit.x - anchor.x, hit.z - anchor.z) > 0.05) {
+      this.dragging.attempted = true;
+    }
+
     // Desired delta from the drag anchor, then clamp so no member leaves the
     // container footprint. We clamp the shared delta (not each item) so the
     // group stays rigid.
@@ -286,8 +300,12 @@ export class Interaction {
       dims: m.placement.dims,
     }));
 
-    // Accept only if every member clears the non-selected items.
-    const accepted = candidates.every((c) => !collidesAny(c, others)) && !this.candidateError(candidates);
+    // Accept only if every member clears the non-selected items and the move
+    // introduces no new layout error; remember why not so onUp can explain.
+    const noCollision = candidates.every((c) => !collidesAny(c, others));
+    const error = noCollision ? this.candidateError(candidates) : 'overlaps other cargo';
+    const accepted = !error;
+    this.dragging.lastReject = error || null;
 
     for (let i = 0; i < members.length; i++) {
       const p = members[i].placement;
@@ -328,7 +346,7 @@ export class Interaction {
         // point at the way out (move the whole stack as a group).
         let msg = this.dragging.lastReject;
         if (/unsupported/.test(msg)) {
-          msg += ' — Shift-click the items on top to select the whole stack and move it together';
+          msg += ' — move the whole stack together (Shift-click to multi-select)';
         }
         toast(msg, 'warn');
       }
@@ -416,10 +434,49 @@ export class Interaction {
     if (p.y + p.dims.h > spec.height) p.y = Math.max(0, spec.height - p.dims.h);
   }
 
+  /**
+   * Error INTRODUCED by substituting `candidates` into the current layout, or
+   * null when the move is safe. Mirrors removalError's semantics: compares
+   * layout validation before and after the move and only reports NEW problems
+   * (e.g. cargo the move would strand), so pre-existing layout issues
+   * elsewhere — a floating legacy item, an over-payload container — cannot
+   * block an unrelated drag, nudge or transform. Shares removalError's
+   * first-error-only limitation (a pre-existing error can mask a second new
+   * one).
+   */
   candidateError(candidates) {
+    const spec = this.cb.getContainerSpec();
+    const placements = activeScenario().placements;
     const replacements = new Map(candidates.map((p) => [p.id, p]));
-    return layoutError(activeScenario().placements.map((p) => replacements.get(p.id) || p),
-      this.cb.getContainerSpec(), catalogItem);
+    const before = layoutError(placements, spec, catalogItem);
+    const after = layoutError(placements.map((p) => replacements.get(p.id) || p), spec, catalogItem);
+    return after && after !== before ? after : null;
+  }
+
+  /**
+   * Ids that must move along with `rootIds` because they rest on them:
+   * placements supported directly or transitively by the carried set, EXCEPT
+   * any item already fully supported by cargo outside the set (an item merely
+   * touching the dragged base but resting entirely on something else stays
+   * put). Mirrors the support predicate layoutError uses.
+   */
+  carriedDependents(placements, rootIds) {
+    const carried = new Set(rootIds);
+    const restsOn = (p, q) =>
+      Math.abs(q.y + q.dims.h - p.y) < 1e-4 && overlapsXZ(p, q) && canStack(p, q);
+    for (let grew = true; grew;) {
+      grew = false;
+      for (const p of placements) {
+        if (carried.has(p.id) || p.y <= COLLISION_EPS) continue;
+        const onCarried = placements.some((q) => carried.has(q.id) && restsOn(p, q));
+        if (!onCarried) continue;
+        const outsideSupports = placements.filter((q) => q !== p && !carried.has(q.id) && restsOn(p, q));
+        if (isFullySupported(p, outsideSupports)) continue; // doesn't need the carried set
+        carried.add(p.id);
+        grew = true;
+      }
+    }
+    return carried;
   }
 
   /**
@@ -533,37 +590,35 @@ export class Interaction {
   }
 
   /**
-   * Apply a reversible transform (rotate/tip) to a placement. The transform is
-   * committed only if the result stays inside the container and does not
-   * overlap any other item; otherwise it snaps back to the original pose.
+   * Apply a reversible transform (rotate/tip) to a placement. The candidate
+   * pose is validated BEFORE the placement is touched — committed only if the
+   * result stays inside the container, overlaps nothing and introduces no new
+   * layout error; otherwise the placement keeps its original pose.
    */
   transformPlacement(p, makeChange, label) {
     if (!this.editAllowed()) return;
-    const prev = {
+    const candidate = {
+      ...p,
       dims: { ...p.dims },
       rot: { ...(p.rot || {}) },
-      x: p.x,
-      y: p.y,
-      z: p.z,
     };
-    const change = makeChange(prev.dims);
-    p.dims = change.dims;
-    p.rot = change.rot;
-    this.clampInside(p);
+    const change = makeChange(candidate.dims);
+    candidate.dims = change.dims;
+    candidate.rot = change.rot;
+    this.clampInside(candidate);
 
-    const others = activeScenario().placements;
-    const error = this.candidateError([p]);
-    if (collidesAny(p, others) || error) {
-      // Revert: not enough room for this orientation here.
-      p.dims = prev.dims;
-      p.rot = prev.rot;
-      p.x = prev.x;
-      p.y = prev.y;
-      p.z = prev.z;
+    const error = this.candidateError([candidate]);
+    if (collidesAny(candidate, activeScenario().placements) || error) {
+      // Rejected: not enough room for this orientation here.
       this.sm.upsertPlacement(p, true);
       toast(error || `Not enough room to ${label} here`, 'warn');
       return;
     }
+    p.dims = candidate.dims;
+    p.rot = candidate.rot;
+    p.x = candidate.x;
+    p.y = candidate.y;
+    p.z = candidate.z;
     this.sm.upsertPlacement(p, true);
     this.cb.onChange();
   }
