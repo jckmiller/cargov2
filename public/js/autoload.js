@@ -221,12 +221,12 @@ function packInto(units, spec, options = {}) {
         // Resolve the item's actual resting height against whatever is
         // physically beneath its footprint (never a flat, guessed layer
         // plane) — this is what keeps items from hovering over gaps. It also
-        // enforces the "no overhang" policy: `restingY` only returns a
-        // height when the entire footprint at that height is carried by
-        // legal, rule-compatible bases (see cargo.js).
+        // enforces the overhang policy: `restingY` only returns a height when
+        // the footprint at that height is carried by legal, rule-compatible
+        // bases, up to the allowed overhang percentage (see cargo.js).
         const y = restingY(
           cursorX, cursorZ, { l: o.l, w: o.w, h: o.h },
-          placements, spec, unit, (p) => p.__item
+          placements, spec, unit, (p) => p.__item, undefined, options.maxOverhangPct ?? 0
         );
         if (y == null) continue;
 

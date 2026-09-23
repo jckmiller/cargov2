@@ -18,6 +18,38 @@ test('layout validation rejects floating cargo, overlaps, out-of-bounds and lost
   assert.match(cargo.layoutError([box('wide', 0, 0, { l: 2, w: 10, h: 2 })], spec), /outside/);
   assert.match(cargo.layoutError([box('base'), box('top', 1, 2)], spec), /unsupported/);
 });
+test('overhang allowance permits slight overhang and reports the ratio', () => {
+  const spec = getContainer('20STD');
+  // Top (2×2) shifted 0.1 ft off the 2×2 base: uncovered area 0.1×2 = 0.2 of
+  // 4 sq ft = exactly 5% overhang.
+  const base = box('base', 0, 0);
+  const top = box('top', 0.1, 2);
+  // Strict (default) still rejects any overhang.
+  assert.match(cargo.layoutError([base, top], spec), /unsupported/);
+  // Within the 5% allowance it validates; 4% is not enough.
+  assert.equal(cargo.layoutError([base, top], spec, () => null, 5), null);
+  assert.match(cargo.layoutError([base, top], spec, () => null, 4), /unsupported/);
+  // overhangFractions reports the 5% overhang (for the red highlight).
+  const ratios = cargo.overhangFractions([base, top]);
+  assert.ok(Math.abs(ratios.get('top') - 0.05) < 1e-9);
+  assert.equal(ratios.has('base'), false);
+  // removalError honors the allowance too.
+  assert.equal(cargo.removalError([base, top, box('far', 6)], 'far', spec, () => null, 5), null);
+  assert.match(cargo.removalError([base, top], 'base', spec, () => null, 5), /unsupported/);
+  // restingY accepts the same slight overhang only under the allowance.
+  const dims = { l: 2, w: 2, h: 2 };
+  assert.equal(cargo.restingY(0.1, 0, dims, [base], spec, top, null, undefined, 5), 2);
+  assert.equal(cargo.restingY(0.1, 0, dims, [base], spec, top), null);
+  // Scenarios default to the 5% allowance.
+  assert.equal(makeScenario().maxOverhangPct, cargo.DEFAULT_MAX_OVERHANG_PCT);
+  // Project validation accepts an overhang within the scenario's allowance.
+  const p = newProject();
+  p.catalog = [cargo.makeCatalogItem({ id: 'cat', qtyAvailable: 2 })];
+  p.scenarios[0].placements = [box('base', 0, 0), box('top', 0.1, 2)];
+  assert.equal(validateProjectData(p), p);
+  p.scenarios[0].maxOverhangPct = 0;
+  assert.throws(() => validateProjectData(p), /unsupported/);
+});
 test('removal is blocked only when it strands cargo, not by unrelated pre-existing issues', () => {
   const spec = getContainer('20STD');
   // Removing the base strands the stacked item: blocked with a useful message.

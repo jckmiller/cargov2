@@ -3,6 +3,11 @@ import { getOpenings } from './container.js';
 
 export const MAX_CATALOG_UNITS = 5000;
 
+// Default footprint-overhang allowance for stacked items (percent of the
+// item's base that may hang past legal supports). Scenarios can override it;
+// anything overhanging within the allowance is highlighted red in the viewer.
+export const DEFAULT_MAX_OVERHANG_PCT = 5;
+
 function numeric(value, fallback, name, min, integer = false) {
   const n = value == null ? fallback : Number(value);
   if (!Number.isFinite(n) || n < min || (integer && !Number.isSafeInteger(n))) {
@@ -192,7 +197,7 @@ export function collidesAny(target, others, eps = COLLISION_EPS) {
  * `skipId` (optional) excludes the placement with that id — useful for the
  * dragged item excluding itself.
  */
-export function restingY(x, z, dims, placements, spec, topItem, baseLookup, skipId) {
+export function restingY(x, z, dims, placements, spec, topItem, baseLookup, skipId, maxOverhangPct = 0) {
   const probe = { x, z, dims };
   const overlapping = placements.filter(
     (o) => (skipId == null || o.id !== skipId) && overlapsXZ(probe, o)
@@ -211,12 +216,11 @@ export function restingY(x, z, dims, placements, spec, topItem, baseLookup, skip
     restY = nextTop;
   }
   if (restY + dims.h > spec.height + COLLISION_EPS) return null; // exceeds container
-  // Legal-support + "no overhang" check: an elevated item must rest fully on
-  // base(s) that stacking rules allow (not e.g. on fragile, or a hazmat
-  // mismatch) AND those legal bases must cover the item's ENTIRE footprint.
-  // Partial support (overhang) is never allowed: a stable container requires
-  // every stacked item's full base to be carried by what is beneath it, with
-  // no part left hanging over open air.
+  // Legal-support + overhang check: an elevated item must rest on base(s) that
+  // stacking rules allow (not e.g. on fragile, or a hazmat mismatch) and those
+  // legal bases must cover the item's footprint — except for a configurable
+  // overhang allowance (maxOverhangPct, percent of the base area that may hang
+  // over open air; default 0 = strict full support).
   if (restY > COLLISION_EPS && topItem) {
     const matched = overlapping.filter((b) => {
       const top = b.y + b.dims.h;
@@ -224,7 +228,7 @@ export function restingY(x, z, dims, placements, spec, topItem, baseLookup, skip
       const base = (baseLookup && baseLookup(b)) || b;
       return canStack(topItem, base);
     });
-    if (!matched.length || !isFullySupported(probe, matched)) return null;
+    if (!matched.length || !isFullySupported(probe, matched, maxOverhangPct)) return null;
   }
   return restY;
 }
@@ -235,15 +239,17 @@ function ySpanIntersects(a0, a1, b0, b1) {
 }
 
 /**
- * "No overhang" support check: true when `box`'s XZ footprint is fully
- * covered by the union of `supports`' XZ footprints (each support exposing a
- * min-corner {x,z} and {dims:{l,w}}). Implemented via iterative axis-aligned
- * rectangle subtraction: start with the box's footprint as a single
- * "uncovered" piece, carve out each support's footprint from every remaining
- * piece, and check whether anything more than a sliver of floating-point
- * noise is left uncovered.
+ * Fraction (0..1) of `box`'s XZ footprint NOT covered by the union of
+ * `supports`' XZ footprints (each support exposing a min-corner {x,z} and
+ * {dims:{l,w}}). Implemented via iterative axis-aligned rectangle
+ * subtraction: start with the box's footprint as a single "uncovered" piece,
+ * carve out each support's footprint from every remaining piece, and measure
+ * what is left. Returns 0 when only a sliver of floating-point noise is
+ * uncovered — real overhang only.
  */
-export function isFullySupported(box, supports) {
+export function overhangRatio(box, supports) {
+  const area = box.dims.l * box.dims.w;
+  if (!(area > 0)) return 0;
   let pieces = [{ x0: box.x, x1: box.x + box.dims.l, z0: box.z, z1: box.z + box.dims.w }];
   for (const s of supports) {
     if (!pieces.length) break;
@@ -256,7 +262,17 @@ export function isFullySupported(box, supports) {
     (sum, p) => sum + Math.max(0, p.x1 - p.x0) * Math.max(0, p.z1 - p.z0),
     0
   );
-  return leftoverArea <= 1e-4; // tolerate only floating-point noise, not real overhang
+  if (leftoverArea <= 1e-4) return 0; // tolerate floating-point noise, not real overhang
+  return Math.min(1, leftoverArea / area);
+}
+
+/**
+ * Overhang support check: true when the uncovered fraction of `box`'s
+ * footprint (see overhangRatio) is within `maxOverhangPct` percent
+ * (default 0 = full support required, only floating-point noise tolerated).
+ */
+export function isFullySupported(box, supports, maxOverhangPct = 0) {
+  return overhangRatio(box, supports) * 100 <= Math.max(0, maxOverhangPct) + 1e-9;
 }
 
 /** Axis-aligned rectangle difference: the piece(s) of `p` not covered by `s`. */
@@ -291,7 +307,7 @@ function subtractRect(p, s) {
  * legal rest exists at this XZ pose (overhang, fragile base, hazmat mismatch,
  * or the group would poke through the roof).
  */
-export function groupRestingDelta(members, outside, spec) {
+export function groupRestingDelta(members, outside, spec, maxOverhangPct = 0) {
   const levels = new Set([0]);
   for (const m of members) {
     levels.add(-m.y); // this member reaches the floor
@@ -305,7 +321,7 @@ export function groupRestingDelta(members, outside, spec) {
       if (p.y <= COLLISION_EPS) return true; // the floor is always a valid base
       const supporters = [...posed.filter((q) => q !== p), ...outside].filter((q) =>
         Math.abs(q.y + q.dims.h - p.y) < 1e-4 && overlapsXZ(p, q) && canStack(p, q));
-      return isFullySupported(p, supporters);
+      return isFullySupported(p, supporters, maxOverhangPct);
     });
     if (supported) return dy;
   }
@@ -343,7 +359,7 @@ export function findFreePlacement(placements, spec, dims, options = {}) {
         const cx = Math.min(x, Math.max(0, maxX));
         let y = 0;
         if (allowStack) {
-          y = restingY(cx, cz, dims, placements, spec, topItem, baseLookup);
+          y = restingY(cx, cz, dims, placements, spec, topItem, baseLookup, undefined, options.maxOverhangPct ?? 0);
           if (y == null) continue;
         }
         const candidate = { x: cx, y, z: cz, dims };
@@ -450,7 +466,7 @@ export function fitAtSpot(x, z, placements, spec, dims, options = {}) {
     const nz = Math.max(0, Math.min(snap(z + (dims.w - o.w) / 2), spec.width - o.w));
     let y = 0;
     if (options.stack) {
-      y = restingY(nx, nz, odims, placements, spec, options.item, options.baseLookup, options.skipId);
+      y = restingY(nx, nz, odims, placements, spec, options.item, options.baseLookup, options.skipId, options.maxOverhangPct ?? 0);
       if (y == null) {
         reason = reason || 'no legal resting spot (fragile base, hazmat mismatch, overhang, or stack too tall)';
         continue;
@@ -491,14 +507,35 @@ export function fitsOpening(dims, spec) {
  * reports NEW problems (e.g. cargo the removed item was supporting), so that
  * pre-existing layout issues elsewhere cannot block deleting an unrelated item.
  */
-export function removalError(placements, removedId, spec, lookup = () => null) {
-  const before = layoutError(placements, spec, lookup);
-  const after = layoutError(placements.filter((p) => p.id !== removedId), spec, lookup);
+export function removalError(placements, removedId, spec, lookup = () => null, maxOverhangPct = 0) {
+  const before = layoutError(placements, spec, lookup, maxOverhangPct);
+  const after = layoutError(placements.filter((p) => p.id !== removedId), spec, lookup, maxOverhangPct);
   return after && after !== before ? after : null;
 }
 
+/** Placements legally supporting `p` right now (the predicate layoutError uses). */
+export function legalSupports(p, placements) {
+  return placements.filter((q) => q !== p && Math.abs(q.y + q.dims.h - p.y) < 1e-4 &&
+    overlapsXZ(p, q) && canStack(p, q));
+}
+
+/**
+ * Map of placement id → overhang fraction (0..1] for every elevated placement
+ * whose footprint is not fully carried by legal supports. Used to highlight
+ * items that overhang within the scenario's allowance.
+ */
+export function overhangFractions(placements) {
+  const out = new Map();
+  for (const p of placements) {
+    if (p.y <= COLLISION_EPS) continue;
+    const ratio = overhangRatio(p, legalSupports(p, placements));
+    if (ratio > 0) out.set(p.id, ratio);
+  }
+  return out;
+}
+
 /** Validate the whole candidate layout, including cargo supported by moved items. */
-export function layoutError(placements, spec, lookup = () => null) {
+export function layoutError(placements, spec, lookup = () => null, maxOverhangPct = 0) {
   let weight = 0;
   const ids = new Set();
   for (const p of placements) {
@@ -516,9 +553,7 @@ export function layoutError(placements, spec, lookup = () => null) {
     if (!placementOrientations(d, { noTip: item.noTip }).some((o) => fitsOpening(o, spec))) return `"${p.name}" cannot clear the door`;
     if (item.noTip && item.height != null && Math.abs(d.h - item.height) > COLLISION_EPS) return `"${p.name}" must stay upright`;
     if (p.y > COLLISION_EPS) {
-      const supports = placements.filter((q) => q !== p && Math.abs(q.y + q.dims.h - p.y) < 1e-4 &&
-        overlapsXZ(p, q) && canStack(p, q));
-      if (!isFullySupported(p, supports)) return `"${p.name}" would be unsupported`;
+      if (!isFullySupported(p, legalSupports(p, placements), maxOverhangPct)) return `"${p.name}" would be unsupported`;
     }
     weight += p.weight;
   }

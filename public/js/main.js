@@ -7,7 +7,7 @@ import {
 import { SceneManager } from './scene.js';
 import { Interaction } from './interaction.js';
 import { getContainer, CONTAINER_TYPES } from './container.js';
-import { makeCatalogItem, uid, itemColor, findFreePlacementAnyOrientation, layoutError, removalError } from './cargo.js';
+import { makeCatalogItem, uid, itemColor, findFreePlacementAnyOrientation, layoutError, removalError, overhangFractions, DEFAULT_MAX_OVERHANG_PCT } from './cargo.js';
 import { createProjectSaver } from './persistence.js';
 import { validateProjectData } from './projectValidation.js';
 import { startPacking } from './packingJob.js';
@@ -217,7 +217,7 @@ function initScene() {
     if (isViewer()) { sel.value = activeScenario()?.containerType || sel.value; return; }
     const scn = activeScenario();
     if (!scn) return;
-    const error = layoutError(scn.placements, getContainer(sel.value), catalogItem);
+    const error = layoutError(scn.placements, getContainer(sel.value), catalogItem, overhangAllowance(scn));
     if (error) { toast(error, 'warn'); sel.value = scn.containerType; return; }
     scn.containerType = sel.value;
     markDirty();
@@ -225,16 +225,31 @@ function initScene() {
     renderAll();
   });
 
+  // Allowed overhang (%) for stacked items in the active container.
+  const overhangInput = document.getElementById('overhang-pct');
+  overhangInput.addEventListener('change', () => {
+    const scn = activeScenario();
+    if (isViewer() || !scn) { overhangInput.value = overhangAllowance(scn); return; }
+    const v = Number(overhangInput.value);
+    if (!Number.isFinite(v)) { overhangInput.value = overhangAllowance(scn); return; }
+    scn.maxOverhangPct = Math.min(100, Math.max(0, Math.round(v)));
+    overhangInput.value = scn.maxOverhangPct;
+    markDirty();
+    renderAll();
+  });
+
   interaction = new Interaction(sm, {
     onSelect: (id, opts = {}) => {
       if (opts.toggle) toggleSelection(id);
       else setSelection(id);
-      sm.syncPlacements(activeScenario().placements, state.selectedPlacementIds);
+      sm.syncPlacements(activeScenario().placements, state.selectedPlacementIds, overhangIdsFor(activeScenario()));
       updateNudgePad();
       renderClearances(selectedPlacementForClearances(), getContainer(activeScenario().containerType));
     },
     onChange: () => {
       markDirty();
+      // Re-sync so overhang highlighting tracks the layout just committed.
+      sm.syncPlacements(activeScenario().placements, state.selectedPlacementIds, overhangIdsFor(activeScenario()));
       renderStats(activeScenario());
       renderScenarios(state.project, state.activeScenarioId, scenarioHandlers(), isViewer());
       renderClearances(selectedPlacementForClearances(), getContainer(activeScenario().containerType));
@@ -257,6 +272,25 @@ function initScene() {
   measure = new MeasureTool(sm);
 }
 
+/** Scenario's overhang allowance (%), defaulting for older saved projects. */
+function overhangAllowance(scn) {
+  return scn?.maxOverhangPct ?? DEFAULT_MAX_OVERHANG_PCT;
+}
+
+/**
+ * Ids of stacked placements overhanging their supports by more than zero but
+ * no more than the scenario's allowance — these render red in the viewer.
+ * (Anything beyond the allowance is a hard layout error, not a highlight.)
+ */
+function overhangIdsFor(scn) {
+  const allowance = overhangAllowance(scn);
+  const ids = new Set();
+  for (const [id, ratio] of overhangFractions(scn.placements)) {
+    if (ratio * 100 <= allowance + 1e-9) ids.add(id);
+  }
+  return ids;
+}
+
 function refreshScene() {
   const scn = activeScenario();
   if (!scn) return;
@@ -267,11 +301,14 @@ function refreshScene() {
   // setContainer() rebuilds the door-jamb overlay, so reapply the user's
   // chosen visibility after every refresh.
   sm.setOpeningsVisible(state.openingsVisible);
-  sm.syncPlacements(scn.placements, state.selectedPlacementIds);
+  sm.syncPlacements(scn.placements, state.selectedPlacementIds, overhangIdsFor(scn));
   sm.setPendingVisible(state.pendingViewVisible);
   if (state.pendingViewVisible) sm.setPendingItems(pendingItemsList(), spec);
   const sel = document.getElementById('container-select');
   sel.value = scn.containerType;
+  const overhangInput = document.getElementById('overhang-pct');
+  overhangInput.value = overhangAllowance(scn);
+  overhangInput.disabled = isViewer();
 }
 
 /**
@@ -373,6 +410,7 @@ function addPlacementFromCatalog(catId) {
   const spot = findFreePlacementAnyOrientation(scn.placements, spec, p.dims, {
     item,
     baseLookup: (o) => catalogItem(o.catalogItemId),
+    maxOverhangPct: overhangAllowance(scn),
   });
   if (!spot) {
     toast(`No room to place "${item.name}"`, 'warn');
@@ -402,7 +440,7 @@ function editPlacement(id) {
     (out) => {
       const candidate = { ...p, name: out.name, category: out.category, hazmatClass: out.hazmatClass,
         dims: { l: out.length, w: out.width, h: out.height }, weight: out.weight, color: itemColor(out) };
-      const error = layoutError(scn.placements.map((q) => q === p ? candidate : q), getContainer(scn.containerType), catalogItem);
+      const error = layoutError(scn.placements.map((q) => q === p ? candidate : q), getContainer(scn.containerType), catalogItem, overhangAllowance(scn));
       if (error) throw new Error(error);
       Object.assign(p, candidate);
       markDirty(); renderAll();
@@ -439,7 +477,7 @@ function removePlacement(id) {
   // Block only when the removal itself introduces a new problem (e.g. strands
   // cargo the item was supporting); pre-existing layout issues elsewhere must
   // not prevent deleting an unrelated item.
-  const error = removalError(scn.placements, id, spec, catalogItem);
+  const error = removalError(scn.placements, id, spec, catalogItem, overhangAllowance(scn));
   if (error) { toast(error, 'warn'); return; }
   staging.push(scn.placements[idx]);
   scn.placements.splice(idx, 1);
@@ -656,6 +694,7 @@ function stagingHandlers() {
       const spot = findFreePlacementAnyOrientation(scn.placements, spec, p.dims, {
         item: catalogItem(p.catalogItemId) || p,
         baseLookup: (o) => catalogItem(o.catalogItemId),
+        maxOverhangPct: overhangAllowance(scn),
       });
       if (!spot) {
         toast(`No room to place "${p.name}"`, 'warn');
@@ -733,6 +772,7 @@ function wireToolbar() {
 
         const job = startPacking(remainingCatalog, {
           containerType, strategy, maxContainers, simulations,
+          maxOverhangPct: overhangAllowance(scn),
         });
         const busy = el('div', {}, [
           el('p', { text: 'Searching cargo layouts… You can cancel without changing the project.' }),

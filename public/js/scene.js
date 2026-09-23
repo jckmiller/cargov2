@@ -351,14 +351,17 @@ export class SceneManager {
   }
 
   /** Create or update a cargo mesh for a placement. */
-  upsertPlacement(p, selected = false) {
+  upsertPlacement(p, selected = false, overhang = false) {
     let group = this.placementMeshes.get(p.id);
     const d = p.dims;
+    // Overhanging (but allowed) stacked items are shown red regardless of
+    // their catalog/hazmat color so the marginal support is visible at a glance.
+    const bodyColor = overhang ? '#ff5c6c' : (p.color || '#4f8cff');
     if (!group) {
       group = new THREE.Group();
       const geo = new THREE.BoxGeometry(1, 1, 1);
       const mat = new THREE.MeshLambertMaterial({
-        color: new THREE.Color(p.color || '#4f8cff'),
+        color: new THREE.Color(bodyColor),
         transparent: true,
         opacity: 0.92,
       });
@@ -378,14 +381,14 @@ export class SceneManager {
     const edges = group.getObjectByName('edges');
     mesh.scale.set(d.l, d.h, d.w);
     edges.scale.set(d.l, d.h, d.w);
-    mesh.material.color = new THREE.Color(p.color || '#4f8cff');
+    mesh.material.color = new THREE.Color(bodyColor);
     mesh.material.emissive = new THREE.Color(selected ? 0x333311 : 0x000000);
     edges.material.color = new THREE.Color(selected ? 0xffc15c : 0x101827);
     // Position by center (placement stores min-corner).
     group.position.set(p.x + d.l / 2, p.y + d.h / 2, p.z + d.w / 2);
 
     // Position/selection-only updates reuse label textures and geometry.
-    const labelKey = JSON.stringify([p.name, p.category, p.hazmatClass, p.weight, p.color, d.l, d.w, d.h]);
+    const labelKey = JSON.stringify([p.name, p.category, p.hazmatClass, p.weight, bodyColor, d.l, d.w, d.h]);
     if (group.userData.labelKey === labelKey) return group;
     group.userData.labelKey = labelKey;
     const old = this.labelGroups.get(p.id);
@@ -429,14 +432,14 @@ export class SceneManager {
    * may be a single placement id, an array of ids, or a Set — every matching
    * mesh is highlighted so multi-selected items all show as selected.
    */
-  syncPlacements(placements, selected) {
+  syncPlacements(placements, selected, overhangIds) {
     const selectedSet =
       selected instanceof Set
         ? selected
         : new Set(Array.isArray(selected) ? selected : selected ? [selected] : []);
     const seen = new Set();
     for (const p of placements) {
-      this.upsertPlacement(p, selectedSet.has(p.id));
+      this.upsertPlacement(p, selectedSet.has(p.id), !!(overhangIds && overhangIds.has(p.id)));
       seen.add(p.id);
     }
     for (const id of [...this.placementMeshes.keys()]) {

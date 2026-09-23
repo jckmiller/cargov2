@@ -95,6 +95,10 @@
               Container
               <select id="container-select"></select>
             </label>
+            <label class="inline" title="Allowed footprint overhang for stacked items (%) — items overhanging within this allowance are highlighted red">
+              Overhang %
+              <input id="overhang-pct" type="number" min="0" max="100" step="1" value="5" style="width:3.5em">
+            </label>
             <button id="btn-toggle-labels" class="btn small" aria-pressed="false" title="Toggle item labels (L)">Labels (L)</button>
             <button id="btn-toggle-pending" class="btn small" aria-pressed="false" title="Show remaining items staged beside the container (P)">Pending Items (P)</button>
             <button id="btn-toggle-snap" class="btn small" aria-pressed="true" title="Snap dragged/nudged items to a 1&quot; grid (G)">Snap Grid (G)</button>

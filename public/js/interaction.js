@@ -11,7 +11,7 @@
 // (last-clicked) item.
 import * as THREE from 'three';
 import { activeScenario, catalogItem } from './store.js';
-import { collidesAny, canStack, overlapsXZ, isFullySupported, COLLISION_EPS, snapToGrid, layoutError, fitAtSpot, groupRestingDelta } from './cargo.js';
+import { collidesAny, canStack, overlapsXZ, isFullySupported, COLLISION_EPS, snapToGrid, layoutError, fitAtSpot, groupRestingDelta, DEFAULT_MAX_OVERHANG_PCT } from './cargo.js';
 import { toast } from './ui.js';
 
 export class Interaction {
@@ -219,6 +219,7 @@ export class Interaction {
       skipId: p.id,
       stack: true,
       snapGrid: this.snapEnabled(),
+      maxOverhangPct: activeScenario().maxOverhangPct ?? DEFAULT_MAX_OVERHANG_PCT,
       validate: (candidate) => this.candidateError([{ ...p, ...candidate }]),
       diag: (reason) => { this.dragging.lastReject = reason; },
     });
@@ -309,7 +310,7 @@ export class Interaction {
     // dy — down off a stack or up onto cargo — where every member is
     // collision-free and fully supported. Without this a carried stack could
     // only land on empty floor and would wall up against any cargo in the path.
-    const dy = groupRestingDelta(candidates, others, spec);
+    const dy = groupRestingDelta(candidates, others, spec, activeScenario().maxOverhangPct ?? DEFAULT_MAX_OVERHANG_PCT);
     let error = null;
     if (dy == null) {
       // No legal rest here. Harvest the specific layout problem from the
@@ -468,9 +469,10 @@ export class Interaction {
   candidateError(candidates) {
     const spec = this.cb.getContainerSpec();
     const placements = activeScenario().placements;
+    const allowance = activeScenario().maxOverhangPct ?? DEFAULT_MAX_OVERHANG_PCT;
     const replacements = new Map(candidates.map((p) => [p.id, p]));
-    const before = layoutError(placements, spec, catalogItem);
-    const after = layoutError(placements.map((p) => replacements.get(p.id) || p), spec, catalogItem);
+    const before = layoutError(placements, spec, catalogItem, allowance);
+    const after = layoutError(placements.map((p) => replacements.get(p.id) || p), spec, catalogItem, allowance);
     return after && after !== before ? after : null;
   }
 

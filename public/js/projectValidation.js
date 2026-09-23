@@ -1,5 +1,5 @@
 // Shared API/import/save validation. No DOM or server dependencies.
-import { CATEGORIES, HAZMAT_CLASSES, MAX_CATALOG_UNITS, layoutError } from './cargo.js';
+import { CATEGORIES, HAZMAT_CLASSES, MAX_CATALOG_UNITS, layoutError, DEFAULT_MAX_OVERHANG_PCT } from './cargo.js';
 import { CONTAINER_TYPES, getContainer } from './container.js';
 
 function requireValue(condition, message) {
@@ -32,6 +32,9 @@ export function validateProjectData(data) {
     scenarioIds.add(scenario.id);
     requireValue(typeof scenario.name === 'string' && scenario.name.trim(), 'Container name required');
     requireValue(Object.hasOwn(CONTAINER_TYPES, scenario.containerType), 'Unknown container type');
+    requireValue(scenario.maxOverhangPct === undefined ||
+      (Number.isFinite(scenario.maxOverhangPct) && scenario.maxOverhangPct >= 0 && scenario.maxOverhangPct <= 100),
+      'Invalid overhang allowance (0-100%)');
     requireValue(Array.isArray(scenario.placements) && scenario.placements.length <= MAX_CATALOG_UNITS, 'Invalid placements');
     for (const p of scenario.placements) {
       requireValue(p && typeof p.id === 'string' && !placementIds.has(p.id), 'Placement IDs must be unique strings');
@@ -42,7 +45,7 @@ export function validateProjectData(data) {
       counts.set(p.catalogItemId, (counts.get(p.catalogItemId) || 0) + 1);
       requireValue(counts.get(p.catalogItemId) <= catalog.get(p.catalogItemId).qtyAvailable, 'Placed quantity exceeds available inventory');
     }
-    const error = layoutError(scenario.placements, getContainer(scenario.containerType), (id) => catalog.get(id));
+    const error = layoutError(scenario.placements, getContainer(scenario.containerType), (id) => catalog.get(id), scenario.maxOverhangPct ?? DEFAULT_MAX_OVERHANG_PCT);
     requireValue(!error, error);
   }
   requireValue(data.staging === undefined || (Array.isArray(data.staging) && data.staging.length <= MAX_CATALOG_UNITS), 'Invalid staging array');

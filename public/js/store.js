@@ -1,5 +1,5 @@
 // Central application state. Controllers explicitly refresh affected views.
-import { uid } from './cargo.js';
+import { uid, DEFAULT_MAX_OVERHANG_PCT } from './cargo.js';
 
 export const state = {
   user: null,
@@ -87,6 +87,9 @@ export function makeScenario(name = 'New Container', containerType = '20STD') {
     name,
     containerType,
     placements: [], // { id, catalogItemId, x, y, z, rot: {l,w,h} , name, category, hazmatClass, weight, color }
+    // Footprint-overhang allowance (%) for stacked items in this container;
+    // items overhanging within the allowance are highlighted red in the viewer.
+    maxOverhangPct: DEFAULT_MAX_OVERHANG_PCT,
     generatedBy: 'manual',
   };
 }
