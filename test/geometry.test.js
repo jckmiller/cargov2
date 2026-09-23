@@ -206,6 +206,47 @@ test('dragging the base of a stack carries the cargo on top', () => {
   assert.equal(c.y, 3, 'C keeps its height on top of B');
   assert.equal(cargo.layoutError(placements, spec), null);
 });
+test('carried stack crosses an occupied far half by settling onto its cargo', () => {
+  const spec = getContainer('20STD');
+  const b = { ...box('b', 1), dims: { l: 4, w: 7, h: 3 } };
+  const c = { ...box('c', 1, 3), dims: { l: 4, w: 4, h: 2 } }; // on B
+  const m = { ...box('m', 8), dims: { l: 4, w: 7, h: 3 } };    // middle cargo
+  const f = { ...box('f', 13), dims: { l: 4, w: 7, h: 2 } };   // far-half floor cargo
+  const placements = [b, c, m, f];
+  const control = interaction(placements);
+  const carried = control.carriedDependents(placements, ['b']);
+  control.dragging = {
+    moveSet: carried, moved: false, isGroup: true,
+    anchor: { x: 1, z: 0 },
+    members: [b, c].map((p) => ({
+      placement: p, offset: { x: 0, z: 0 },
+      lastValid: { x: p.x, y: p.y, z: p.z }, start: { x: p.x, y: p.y, z: p.z },
+    })),
+  };
+  for (const hx of [3, 5, 7, 9, 11, 13]) control.moveGroup({ x: hx, z: 0 });
+  assert.equal(b.x, 13, 'the tower should cross to the far half, not wall up mid-way');
+  assert.equal(b.y, 2, 'the base settles on the far cargo top');
+  assert.equal(c.x, 13);
+  assert.equal(c.y, 5, 'the top item rides along, keeping its relative height');
+  assert.equal(cargo.layoutError(placements, spec), null);
+});
+test('group drag settles DOWN off a stack onto free floor', () => {
+  const spec = getContainer('20STD');
+  const m = { ...box('m', 0), dims: { l: 4, w: 7, h: 3 } };    // stack base (not moved)
+  const a = { ...box('a', 0, 3), dims: { l: 4, w: 4, h: 2 } }; // on M, dragged alone
+  const placements = [m, a];
+  const control = interaction(placements);
+  control.dragging = {
+    moveSet: new Set(['a']), moved: false, isGroup: true,
+    anchor: { x: 0, z: 0 },
+    members: [{ placement: a, offset: { x: 0, z: 0 },
+      lastValid: { x: a.x, y: a.y, z: a.z }, start: { x: a.x, y: a.y, z: a.z } }],
+  };
+  control.moveGroup({ x: 8, z: 0 }); // free floor
+  assert.equal(a.x, 8);
+  assert.equal(a.y, 0, 'settles down to the floor instead of hovering at stack height');
+  assert.equal(cargo.layoutError(placements, spec), null);
+});
 test('carriedDependents stacks transitively but skips independent cargo', () => {
   const b = { ...box('b', 0), dims: { l: 4, w: 7, h: 2 } };
   const c = { ...box('c', 0, 2), dims: { l: 4, w: 4, h: 2 } }; // on B

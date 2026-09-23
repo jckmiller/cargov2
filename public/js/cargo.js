@@ -275,6 +275,44 @@ function subtractRect(p, s) {
 }
 
 /**
+ * Lowest uniform vertical shift `dy` that lets a RIGID GROUP of boxes rest
+ * legally at a target XZ pose — the group-drag counterpart of `restingY` for
+ * a single box. `members` are candidate poses (min-corner {x,y,z} + dims) at
+ * their target XZ with their START heights; `outside` are the placements the
+ * group must not collide with. A uniform dy keeps every member's relative
+ * position and height, so support relations INSIDE the group are dy-invariant
+ * (a stack moves as one).
+ *
+ * Returns the lowest dy (negative when the group can settle DOWN, e.g. off a
+ * stack onto the floor) such that every member stays inside the container,
+ * collides with nothing outside, and is fully supported — by the floor, by
+ * outside cargo tops at the right level, or by fellow members (stacking rules
+ * enforced via the same predicate layoutError uses). Returns null when no
+ * legal rest exists at this XZ pose (overhang, fragile base, hazmat mismatch,
+ * or the group would poke through the roof).
+ */
+export function groupRestingDelta(members, outside, spec) {
+  const levels = new Set([0]);
+  for (const m of members) {
+    levels.add(-m.y); // this member reaches the floor
+    for (const o of outside) levels.add(o.y + o.dims.h - m.y); // rests on o's top
+  }
+  for (const dy of [...levels].sort((a, b) => a - b)) {
+    const posed = members.map((m) => ({ ...m, y: m.y + dy }));
+    if (posed.some((p) => p.y < -COLLISION_EPS || p.y + p.dims.h > spec.height + COLLISION_EPS)) continue;
+    if (posed.some((p) => collidesAny(p, outside))) continue;
+    const supported = posed.every((p) => {
+      if (p.y <= COLLISION_EPS) return true; // the floor is always a valid base
+      const supporters = [...posed.filter((q) => q !== p), ...outside].filter((q) =>
+        Math.abs(q.y + q.dims.h - p.y) < 1e-4 && overlapsXZ(p, q) && canStack(p, q));
+      return isFullySupported(p, supporters);
+    });
+    if (supported) return dy;
+  }
+  return null;
+}
+
+/**
  * Find the first non-overlapping resting spot for an item of `dims` inside the
  * container. Scans the floor footprint at ground level first (keeping items as
  * low as possible); if the floor is full, scans again allowing the item to rest

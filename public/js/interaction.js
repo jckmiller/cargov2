@@ -4,13 +4,14 @@
 //
 // Multi-select + move-as-one: Shift-click toggles items in/out of a selection
 // set. Plain-dragging any member of the set translates the whole set as a rigid
-// group — every member keeps its relative position and height so the group
-// moves as one, validated all-or-nothing against non-selected items. Delete and
-// the nudge pad/arrow keys act on the whole set; rotate/tip/edit/details act on
-// the primary (last-clicked) item.
+// group — every member keeps its relative position and height, and the group
+// settles vertically onto whatever legal support is beneath — validated
+// all-or-nothing against non-selected items. Delete and the nudge pad/arrow
+// keys act on the whole set; rotate/tip/edit/details act on the primary
+// (last-clicked) item.
 import * as THREE from 'three';
 import { activeScenario, catalogItem } from './store.js';
-import { collidesAny, canStack, overlapsXZ, isFullySupported, COLLISION_EPS, snapToGrid, layoutError, fitAtSpot } from './cargo.js';
+import { collidesAny, canStack, overlapsXZ, isFullySupported, COLLISION_EPS, snapToGrid, layoutError, fitAtSpot, groupRestingDelta } from './cargo.js';
 import { toast } from './ui.js';
 
 export class Interaction {
@@ -254,10 +255,14 @@ export class Interaction {
 
   /**
    * Group drag: translate every selected item rigidly by a single XZ delta,
-   * preserving each member's relative position and height. The delta is clamped
-   * so the group's bounding footprint stays inside the container, then the pose
-   * is accepted only if no member collides with a non-selected item; otherwise
-   * the whole group holds its last valid pose.
+   * preserving each member's relative position, then SETTLE the group
+   * vertically — the lowest uniform height shift where every member is
+   * collision-free and fully supported (floor, cargo below, or each other), so
+   * a carried stack can climb over and land on cargo instead of walling up
+   * against it. The XZ delta is clamped so the group's bounding footprint
+   * stays inside the container; the pose is accepted only if it also
+   * introduces no new layout error, otherwise the whole group holds its last
+   * valid pose.
    */
   moveGroup(hit) {
     const spec = this.cb.getContainerSpec();
@@ -300,10 +305,26 @@ export class Interaction {
       dims: m.placement.dims,
     }));
 
-    // Accept only if every member clears the non-selected items and the move
-    // introduces no new layout error; remember why not so onUp can explain.
-    const noCollision = candidates.every((c) => !collidesAny(c, others));
-    const error = noCollision ? this.candidateError(candidates) : 'overlaps other cargo';
+    // Settle the whole group vertically at the target XZ: the lowest uniform
+    // dy — down off a stack or up onto cargo — where every member is
+    // collision-free and fully supported. Without this a carried stack could
+    // only land on empty floor and would wall up against any cargo in the path.
+    const dy = groupRestingDelta(candidates, others, spec);
+    let error = null;
+    if (dy == null) {
+      // No legal rest here. Harvest the specific layout problem from the
+      // fixed-height pose when there is one (e.g. cargo the move would
+      // strand), else fall back to a generic explanation.
+      error = this.candidateError(candidates) ||
+        (candidates.some((c) => collidesAny(c, others))
+          ? 'overlaps other cargo'
+          : 'no legal resting spot for the whole group there');
+    } else {
+      for (const c of candidates) c.y += dy;
+      // Backstop: the settle already guarantees clearance + support, but keep
+      // the full-layout rule check (door clearance, hazmat, payload...).
+      error = this.candidateError(candidates);
+    }
     const accepted = !error;
     this.dragging.lastReject = error || null;
 
@@ -325,7 +346,7 @@ export class Interaction {
       }
       this.sm.upsertPlacement(p, true);
     }
-    if (accepted && (dx !== 0 || dz !== 0)) this.dragging.moved = true;
+    if (accepted && (dx !== 0 || dz !== 0 || (dy || 0) !== 0)) this.dragging.moved = true;
   }
 
   onUp() {

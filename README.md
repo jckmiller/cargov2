@@ -73,7 +73,7 @@ the database is empty and `ADMIN_PASSWORD` is not provided.
 - Container types with real ISO internal dimensions and payload limits:
   20' Standard (47,900 lb), 40' Standard (58,860 lb), 40' High Cube (58,860 lb),
   40' Side-Load (8' high, 52,910 lb).
-- Drag & drop that settles items at the lowest legal rest — the floor when it's free, otherwise on top of legal supports — so items can be dragged across stacked cargo (stacking rules enforced). Dragging an item automatically carries whatever is stacked on top of it as a rigid unit. Blocked drags explain why they were rejected.
+- Drag & drop that settles items at the lowest legal rest — the floor when it's free, otherwise on top of legal supports — so items can be dragged across stacked cargo (stacking rules enforced). Dragging an item automatically carries whatever is stacked on top of it as a rigid unit, and the whole group settles onto cargo below when the floor is taken. Blocked drags explain why they were rejected.
 - **Snap-to-grid (`G`):** drags and nudges snap to a 1" grid by default so items align precisely; toggle on/off from the toolbar or the `G` key (persisted).
 - Rotate 90° (`R`, swaps L/W) or tip forward (`T`, swaps L/H).
 - 3D item tags/labels (`L`), dark/light theme toggle.

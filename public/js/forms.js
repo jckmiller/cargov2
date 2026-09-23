@@ -406,9 +406,9 @@ export function shortcutsModal() {
       [['Dbl-Click'], 'Open item details'],
     ]],
     ['Move', [
-      [['Drag'], 'Move item (drops to floor, snaps to 1" grid)'],
-      [['Shift', 'Drag'], 'Stack on the item below'],
-      [['Drag'], 'Move whole selection as one group'],
+      [['Drag'], 'Move item — settles on the floor or on legal stacks (1" grid)'],
+      [['Drag'], 'Dragging a stack base carries the cargo on top'],
+      [['Drag'], 'Move whole selection as one group (settles onto cargo)'],
       [['←', '↑', '↓', '→'], 'Nudge (hold Alt for a 6" step)'],
       [['PgUp', 'PgDn'], 'Raise / lower'],
     ]],
