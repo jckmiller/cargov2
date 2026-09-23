@@ -47,12 +47,12 @@ test('project validation rejects over-allocation, orphan placements and malforme
 
 // Exercise the real interaction methods without loading CDN Three.js or WebGL.
 // These methods only need the actual cargo helpers plus renderer/state doubles.
-function interaction(placements) {
+function interaction(placements, toast = () => {}) {
   const scenario = { placements };
   const source = fs.readFileSync(new URL('../public/js/interaction.js', import.meta.url), 'utf8')
     .replace(/^import .*;$/gm, '').replace('export class Interaction', 'class Interaction');
   const C = vm.runInNewContext(`${source}\nInteraction`, {
-    ...cargo, activeScenario: () => scenario, catalogItem: () => null, toast: () => {},
+    ...cargo, activeScenario: () => scenario, catalogItem: () => null, toast,
   });
   const instance = Object.create(C.prototype);
   instance.sm = { upsertPlacement: () => {} };
@@ -137,15 +137,80 @@ test('single-item drag auto-rotates to fit beside a blocking item', () => {
   assert.equal(a.rot.rot, 90);
   assert.equal(cargo.collidesAny(a, [b]), false);
 });
-test('single-item drag snaps back when no orientation fits', () => {
+test('single-item drag settles on top of cargo blocking the floor spot', () => {
   const b = box('b'); // 2x2x2 at the origin
   const a = { ...box('a', 6, 0, { l: 2, w: 2, h: 2 }) };
   a.rot = { rot: 0, tipped: false };
   const control = interaction([b, a]);
   control.dragging = {
-    stackMode: false, moveSet: new Set(['a']), moved: false,
+    moveSet: new Set(['a']), moved: false,
+    anchor: { x: 6, z: 0 },
     members: [{ placement: a, offset: { x: 0, z: 0 }, lastValid: { x: a.x, y: a.y, z: a.z } }],
   };
-  control.moveSingle({ x: 1, z: 1 }); // squarely onto B: no orientation fits
+  control.moveSingle({ x: 0, z: 0 }); // onto B's footprint: floor taken, A stacks on top
+  assert.deepEqual({ x: a.x, y: a.y, z: a.z }, { x: 0, y: 2, z: 0 });
+});
+test('single-item drag snaps back when there is no legal rest', () => {
+  const b = { ...box('b'), category: 'fragile' }; // fragile: cannot support cargo
+  const a = { ...box('a', 6, 0, { l: 2, w: 2, h: 2 }) };
+  a.rot = { rot: 0, tipped: false };
+  const control = interaction([b, a]);
+  control.dragging = {
+    moveSet: new Set(['a']), moved: false,
+    anchor: { x: 6, z: 0 },
+    members: [{ placement: a, offset: { x: 0, z: 0 }, lastValid: { x: a.x, y: a.y, z: a.z } }],
+  };
+  control.moveSingle({ x: 0, z: 0 }); // onto a fragile base: no legal rest
   assert.deepEqual({ x: a.x, y: a.y, z: a.z }, { x: 6, y: 0, z: 0 });
+});
+test('plain drag crosses stacked cargo: settles on the far stack tops', () => {
+  const spec = getContainer('20STD');
+  // Floor fully covered by four 4x7x3 bases; C starts stacked on the first.
+  const mk = (id, x) => ({ ...box(id, x), dims: { l: 4, w: 7, h: 3 } });
+  const b = mk('b', 2), d = mk('d', 6), e = mk('e', 10), f = mk('f', 14);
+  const c = { ...box('c', 2, 3), dims: { l: 4, w: 4, h: 2 } };
+  c.rot = { rot: 0, tipped: false };
+  const placements = [b, d, e, f, c];
+  const control = interaction(placements);
+  control.dragging = {
+    moveSet: new Set(['c']), moved: false,
+    anchor: { x: 2, z: 0 },
+    members: [{ placement: c, offset: { x: 0, z: 0 }, lastValid: { x: c.x, y: c.y, z: c.z } }],
+  };
+  for (const x of [3, 5, 7, 9, 11, 13, 14]) control.moveSingle({ x, z: 0 });
+  assert.equal(c.x, 14, 'C should glide across the container to the far half');
+  assert.equal(c.y, 3, 'C should rest on the far stack top, not rubber-band home');
+  assert.equal(cargo.collidesAny(c, [b, d, e, f]), false);
+  assert.equal(cargo.layoutError(placements, spec), null);
+});
+test('dragging the base of a stack stays put and explains why on release', () => {
+  const b = { ...box('b', 2), dims: { l: 4, w: 7, h: 3 } };
+  const c = { ...box('c', 2, 3), dims: { l: 4, w: 4, h: 2 } }; // C sits on B
+  const msgs = [];
+  const control = interaction([b, c], (m, kind) => msgs.push([m, kind]));
+  control.dragging = {
+    moveSet: new Set(['b']), moved: false,
+    anchor: { x: 2, z: 0 },
+    members: [{ placement: b, offset: { x: 0, z: 0 }, lastValid: { x: b.x, y: b.y, z: b.z } }],
+  };
+  control.moveSingle({ x: 10, z: 0 }); // try to drag the base out from under C
+  control.onUp();
+  assert.equal(b.x, 2, 'base must not move while C sits on it');
+  assert.equal(msgs.length, 1, 'blocked drag should explain itself once');
+  assert.match(msgs[0][0], /"c" would be unsupported/);
+  assert.match(msgs[0][0], /Shift-click/, 'should hint at moving the whole stack');
+  assert.equal(msgs[0][1], 'warn');
+});
+test('fitAtSpot reports why no orientation fits via diag', () => {
+  const spec = getContainer('20STD');
+  let reason = null;
+  const diag = (r) => { reason = r; };
+  // Too tall and do-not-tip: every orientation is rejected.
+  assert.equal(cargo.fitAtSpot(0, 0, [], spec, { l: 2, w: 2, h: 9 }, { noTip: true, diag }), null);
+  assert.match(reason, /too tall/);
+  // A validate() rule error is the most specific explanation and wins.
+  reason = null;
+  assert.equal(cargo.fitAtSpot(0, 0, [], spec, { l: 2, w: 2, h: 2 },
+    { validate: () => 'custom rule broken', diag }), null);
+  assert.equal(reason, 'custom rule broken');
 });

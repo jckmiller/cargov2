@@ -1,6 +1,6 @@
-// Pointer + keyboard interaction: select, drag (drops to the floor by default),
-// Shift-click to build a multi-selection, rotate (R), tip (T), delete,
-// dbl-click details.
+// Pointer + keyboard interaction: select, drag (settles at the lowest legal
+// rest — the floor when free, otherwise on top of legal supports), Shift-click
+// to build a multi-selection, rotate (R), tip (T), delete, dbl-click details.
 //
 // Multi-select + move-as-one: Shift-click toggles items in/out of a selection
 // set. Plain-dragging any member of the set translates the whole set as a rigid
@@ -10,7 +10,7 @@
 // the primary (last-clicked) item.
 import * as THREE from 'three';
 import { activeScenario, catalogItem } from './store.js';
-import { collidesAny, restingY, snapToGrid, layoutError, fitAtSpot } from './cargo.js';
+import { collidesAny, snapToGrid, layoutError, fitAtSpot } from './cargo.js';
 import { toast } from './ui.js';
 
 export class Interaction {
@@ -88,9 +88,10 @@ export class Interaction {
 
     // Shift decides between two actions based on whether the user drags:
     //   • Shift+click (no movement) → toggle this item in/out of the selection.
-    //   • Shift+drag → classic "stack on item" for this single item.
-    // We can't know which until pointerup, so begin a single-item stack-drag
-    // now and remember to toggle the selection on release if nothing moved.
+    //   • Shift+drag → drag this single item without disturbing the current
+    //     selection (same settle behavior as a plain drag).
+    // We can't know which until pointerup, so begin a single-item drag now and
+    // remember to toggle the selection on release if nothing moved.
     if (e.shiftKey) {
       this.dragPlane.constant = -placement.y;
       this.raycaster.setFromCamera(this.pointer, this.sm.camera);
@@ -103,7 +104,6 @@ export class Interaction {
           lastValid: { x: placement.x, y: placement.y, z: placement.z },
         }],
         isGroup: false,
-        stackMode: true,
         moveSet: new Set([id]),
         anchor: new THREE.Vector3(hit0.x, 0, hit0.z),
         moved: false,
@@ -141,10 +141,8 @@ export class Interaction {
         start: { x: p.x, y: p.y, z: p.z },
       })),
       isGroup,
-      // Single-item drags honor the classic Shift-to-stack behavior. Group
-      // drags translate rigidly (each member keeps its height) so the set moves
-      // "as one", so stackMode only applies to single-item drags.
-      stackMode: isGroup ? false : e.shiftKey,
+      // Group drags translate rigidly (each member keeps its height) so the set
+      // moves "as one"; single-item drags settle at the lowest legal rest.
       moveSet: new Set(moveIds),
       anchor: new THREE.Vector3(hit.x, 0, hit.z),
       moved: false,
@@ -180,13 +178,26 @@ export class Interaction {
     return !this.cb.getSnapEnabled || this.cb.getSnapEnabled() !== false;
   }
 
-  /** Single-item drag: floor by default, Shift settles on supports beneath. */
+  /**
+   * Single-item drag: settle at the lowest legal rest under the pointer — the
+   * floor when it is free, otherwise on top of whatever legal supports are
+   * beneath (stacking rules enforced) — so an item can be dragged across
+   * stacked cargo instead of rubber-banding the moment the floor is covered.
+   */
   moveSingle(hit) {
     const d = this.dragging.members[0];
     const p = d.placement;
     const spec = this.cb.getContainerSpec();
     const x = hit.x - d.offset.x;
     const z = hit.z - d.offset.z;
+
+    // Distinguish a real drag attempt from a plain click: the pointer must
+    // travel a little from the drag anchor before a blocked drop is worth
+    // explaining on release.
+    const anchor = this.dragging.anchor;
+    if (anchor && Math.hypot(hit.x - anchor.x, hit.z - anchor.z) > 0.05) {
+      this.dragging.attempted = true;
+    }
 
     // Fit the item at the pointer spot. The current orientation is tried
     // first; if it doesn't fit there, fitAtSpot retries the item rotated 90°
@@ -197,12 +208,14 @@ export class Interaction {
       item: catalogItem(p.catalogItemId) || p,
       baseLookup: (o) => catalogItem(o.catalogItemId) || o,
       skipId: p.id,
-      stack: this.dragging.stackMode,
+      stack: true,
       snapGrid: this.snapEnabled(),
       validate: (candidate) => this.candidateError([{ ...p, ...candidate }]),
+      diag: (reason) => { this.dragging.lastReject = reason; },
     });
 
     if (fit) {
+      this.dragging.lastReject = null;
       const reoriented =
         fit.dims.l !== p.dims.l || fit.dims.w !== p.dims.w || fit.dims.h !== p.dims.h;
       if (reoriented) {
@@ -306,31 +319,21 @@ export class Interaction {
           this.cb.onSelect(this.dragging.shiftToggleId);
         }
         this.cb.onChange();
-      } else if (this.dragging.shiftToggleId) {
+      } else if (this.dragging.shiftToggleId && !this.dragging.attempted) {
         // Shift+click without a drag: toggle the item in the multi-selection.
         this.cb.onSelect(this.dragging.shiftToggleId, { toggle: true });
+      } else if (this.dragging.attempted && this.dragging.lastReject) {
+        // A real drag that never found a legal pose: explain why instead of
+        // silently snapping back. When the dragged item is carrying a stack,
+        // point at the way out (move the whole stack as a group).
+        let msg = this.dragging.lastReject;
+        if (/unsupported/.test(msg)) {
+          msg += ' — Shift-click the items on top to select the whole stack and move it together';
+        }
+        toast(msg, 'warn');
       }
     }
     this.dragging = null;
-  }
-
-  /**
-   * Resting Y for the dragged placement `p` — the lowest non-overlapping
-   * height given the other items (auto-stack). Delegates to `restingY`, so the
-   * item settles as close to the floor as possible rather than popping on top
-   * of whatever it grazes. Returns null when no legal resting height exists
-   * within the container (e.g. the resulting stack would exceed the container
-   * height or hover on a forbidden base), so the caller can reject the move.
-   */
-  computeStackY(p, spec) {
-    return restingY(
-      p.x, p.z, p.dims,
-      activeScenario().placements,
-      spec,
-      catalogItem(p.catalogItemId) || p,                       // topItem
-      (o) => catalogItem(o.catalogItemId) || o,                // baseLookup
-      p.id                                                      // skipId (exclude self)
-    );
   }
 
   onDblClick(e) {

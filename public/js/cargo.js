@@ -384,10 +384,12 @@ export function findFreePlacementAnyOrientation(placements, spec, dims, options 
  *
  * @param {number} x,z   requested min-corner position (pre-snap pointer target)
  * @param {object} options { item?, noTip?, baseLookup?, skipId?, stack?,
- *   snapGrid?, validate?(candidate)=>error|null }
+ *   snapGrid?, validate?(candidate)=>error|null, diag?(reason) }
  *   - stack:    settle onto supports via restingY instead of dropping to y=0
  *   - skipId:   placement id to ignore as obstacle (the dragged item itself)
  *   - validate: extra rule check; candidate is rejected when it returns truthy
+ *   - diag:     optional callback receiving the most specific rejection reason
+ *               when no orientation fits (a validate() error beats generics)
  * @returns {{x:number, y:number, z:number, dims:object, rot:{rot:number, tipped:boolean}}|null}
  *   The pose that fit (dims/rot describe the orientation change relative to
  *   the given `dims`), or null when no orientation fits at this spot.
@@ -395,10 +397,14 @@ export function findFreePlacementAnyOrientation(placements, spec, dims, options 
 export function fitAtSpot(x, z, placements, spec, dims, options = {}) {
   const noTip = !!(options.noTip ?? options.item?.noTip);
   const snap = options.snapGrid ? (v) => snapToGrid(v) : (v) => v;
+  let reason = null; // why no orientation has fit so far (for options.diag)
   for (const o of placementOrientations(dims, { noTip })) {
     const odims = { l: o.l, w: o.w, h: o.h };
     // Floor drops skip restingY, so enforce the container height explicitly.
-    if (!options.stack && o.h > spec.height + COLLISION_EPS) continue;
+    if (!options.stack && o.h > spec.height + COLLISION_EPS) {
+      reason = reason || 'too tall for the container';
+      continue;
+    }
     // Keep the footprint CENTER at the requested spot when the orientation
     // changes, so a reoriented item doesn't jump sideways out from under the
     // pointer; then snap and clamp inside the container with the new dims.
@@ -407,13 +413,27 @@ export function fitAtSpot(x, z, placements, spec, dims, options = {}) {
     let y = 0;
     if (options.stack) {
       y = restingY(nx, nz, odims, placements, spec, options.item, options.baseLookup, options.skipId);
-      if (y == null) continue;
+      if (y == null) {
+        reason = reason || 'no legal resting spot (fragile base, hazmat mismatch, overhang, or stack too tall)';
+        continue;
+      }
     }
     const candidate = { id: options.skipId, x: nx, y, z: nz, dims: odims };
-    if (collidesAny(candidate, placements)) continue;
-    if (options.validate && options.validate(candidate)) continue;
+    if (collidesAny(candidate, placements)) {
+      reason = reason || 'overlaps other cargo';
+      continue;
+    }
+    if (options.validate) {
+      const err = options.validate(candidate);
+      // A rule error (e.g. stranded support) is the most useful explanation.
+      if (err) {
+        reason = typeof err === 'string' ? err : (reason || 'not allowed there');
+        continue;
+      }
+    }
     return { x: nx, y, z: nz, dims: odims, rot: { rot: o.rot, tipped: o.tipped } };
   }
+  if (reason && options.diag) options.diag(reason);
   return null;
 }
 
