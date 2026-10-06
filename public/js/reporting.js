@@ -546,11 +546,19 @@ export function loadPlanHTML(scenario, project, user, views) {
   const spec = st.container;
   const stackedCount = steps.filter((s) => s.stacked).length;
 
+  // Intro mirrors the Packing Manifest: same stat cards (Items / Volume Used /
+  // Hazmat Items) so the two deliverables present one consistent summary.
   const cards = statCards([
-    { label: 'Load Steps', value: steps.length },
-    { label: 'On Floor', value: steps.length - stackedCount },
-    { label: 'Stacked', value: stackedCount },
-    { label: 'Total Weight', valueHtml: escapeHtml(fmtLb(st.totalWeight)), note: `${fmtPct(st.weightPct)} of payload` },
+    { label: 'Items', value: st.itemCount },
+    {
+      label: 'Volume Used',
+      valueHtml: escapeHtml(fmtPct(st.volumePct)),
+      note: fmtFt3(st.usedVolume),
+    },
+    {
+      label: 'Hazmat Items',
+      value: st.hazmatCount,
+    },
   ]);
 
   const rows = steps
@@ -576,18 +584,31 @@ export function loadPlanHTML(scenario, project, user, views) {
       </table>`
     : '<div class="rp-empty">No items placed — nothing to load.</div>';
 
-  return `${masthead('Load Plan', `${BRAND.product} · ${BRAND.tagline}`)}
+  // Meta grid mirrors the Manifest's 4 rows × 3 columns (gross values derived
+  // from tare + payload; row 3 shows limits, row 4 shows actual payload/gross),
+  // with the load-relevant Clear Door Opening kept in row 2.
+  const dims = `${fmtFeet(spec.length)} L × ${fmtFeet(spec.width)} W × ${fmtFeet(spec.height)} H`;
+  const cubicFeet = spec.length * spec.width * spec.height;
+
+  return `${masthead('Load Plan', null, { hideCompany: true })}
     ${metaGrid([
       ['Project', project?.name || '—'],
       ['Container Loading', scenario.name],
-      ['Container', spec.name],
-      ['Clear Door Opening', openingsSummary(spec)],
       ['Prepared By', user?.username || '—'],
+      ['Container', spec.name],
+      ['Internal Dimensions', dims],
+      ['Clear Door Opening', openingsSummary(spec)],
+      ['Cubic Feet Total', fmtFt3(cubicFeet)],
+      ['Tare', fmtLb(spec.tareLb)],
+      ['Payload Limit', fmtLb(spec.payloadLb)],
+      ['Max Gross', fmtLb(spec.tareLb + spec.payloadLb)],
+      ['Payload', fmtLb(st.totalWeight)],
+      ['Gross', fmtLb(spec.tareLb + st.totalWeight)],
     ])}
     ${cards}
     ${viewsFigure(views) ? `<h2 class="rp-section-title">Container Views</h2>
     ${viewsFigure(views)}` : ''}
-    <p class="rp-note">Load in the sequence shown: start at the point furthest from the doors, stack each position fully, then work back toward the doors.</p>
+    <p class="rp-note">Load in the sequence shown: start at the point furthest from the doors, stack each position fully, then work back toward the doors. ${steps.length} step${steps.length === 1 ? '' : 's'} — ${steps.length - stackedCount} on the floor, ${stackedCount} stacked.</p>
     <h2 class="rp-section-title">Loading Sequence</h2>
     ${table}`;
 }
