@@ -52,6 +52,28 @@ test('overhang allowance permits slight overhang and reports the ratio', () => {
   assert.equal(validateProjectData(p), p);
   assert.deepEqual(collectLayoutWarnings(p), [`${p.scenarios[0].name}: "top" would be unsupported`]);
 });
+test('catalog item names are unique identifiers within a project', () => {
+  const mk = (id, name) => cargo.makeCatalogItem({ id, name, qtyAvailable: 1 });
+  const p = newProject();
+  // Unique names (identifiers) validate fine.
+  p.catalog = [mk('cat1', 'GBX0001'), mk('cat2', 'GBX0002')];
+  assert.equal(validateProjectData(p), p);
+  // Exact duplicate name is rejected — only one GBX0001 per project.
+  p.catalog = [mk('cat1', 'GBX0001'), mk('cat2', 'GBX0001')];
+  assert.throws(() => validateProjectData(p), /unique identifiers/);
+  // Whitespace is trimmed before comparison.
+  p.catalog = [mk('cat1', 'GBX0001'), mk('cat2', ' GBX0001 ')];
+  assert.throws(() => validateProjectData(p), /unique identifiers/);
+  // Matching is case-sensitive: gbx0001 is a distinct identifier.
+  p.catalog = [mk('cat1', 'GBX0001'), mk('cat2', 'gbx0001')];
+  assert.equal(validateProjectData(p), p);
+  // The placement/staging copies of a catalog name are NOT affected — several
+  // placed units of the same item legitimately share the item's name.
+  const q = newProject();
+  q.catalog = [cargo.makeCatalogItem({ id: 'cat', name: 'GBX0001', qtyAvailable: 2 })];
+  q.scenarios[0].placements = [box('base', 0, 0), box('top', 0, 2)];
+  assert.equal(validateProjectData(q), q);
+});
 test('removal is blocked only when it strands cargo, not by unrelated pre-existing issues', () => {
   const spec = getContainer('20STD');
   // Removing the base strands the stacked item: blocked with a useful message.

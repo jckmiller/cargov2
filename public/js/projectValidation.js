@@ -11,10 +11,15 @@ export function validateProjectData(data) {
     'Project must contain catalog and scenarios arrays');
   requireValue(data.catalog.length <= MAX_CATALOG_UNITS && data.scenarios.length <= 100, 'Project exceeds item/container limits');
   const catalog = new Map();
+  const names = new Set();
   let units = 0;
   for (const item of data.catalog) {
     requireValue(item && typeof item.id === 'string' && item.id && !catalog.has(item.id), 'Catalog IDs must be unique strings');
     requireValue(typeof item.name === 'string' && item.name.trim() && item.name.length <= 200, 'Item name must be 1–200 characters');
+    // Item names are unique identifiers (case-sensitive, whitespace-trimmed):
+    // only one GBX0001 may exist in the entire project.
+    requireValue(!names.has(item.name.trim()), `Item name "${item.name.trim()}" is already used; names must be unique identifiers`);
+    names.add(item.name.trim());
     requireValue([item.length, item.width, item.height].every((n) => Number.isFinite(n) && n > 0), 'All item dimensions must be positive numbers');
     requireValue(Number.isFinite(item.weight) && item.weight >= 0, 'Item weight must be nonnegative');
     requireValue(Number.isSafeInteger(item.qtyAvailable) && item.qtyAvailable >= 0, 'Item quantity must be a nonnegative integer');
