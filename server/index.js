@@ -55,7 +55,10 @@ if (corsOrigins.length) {
 
 app.use(express.json({ limit: '10mb' }));
 
-// Throttle auth attempts to blunt credential brute-forcing.
+/**
+ * Throttle auth attempts to blunt credential brute-forcing: at most 20 login
+ * attempts per IP per 15-minute window, reported via standard rate-limit headers.
+ */
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 20,
@@ -73,6 +76,11 @@ app.use('/api/projects', projectsRoutes);
 app.use('/api', logsRoutes);
 app.use('/api', (_req, res) => res.status(404).json({ error: 'API route not found' }));
 
+// Central error handler. Clamps the status to a valid 4xx/5xx (defaulting to
+// 500), records 4xx/5xx API errors in the in-memory diagnostics buffer, and
+// never leaks internals to clients: 500 responses always report a generic
+// message and a truncated, de-rooted stack only to the server console / log
+// buffer, while thrown 4xx errors pass their message through verbatim.
 app.use((err, req, res, _next) => {
   const status = Number.isInteger(err.status) && err.status >= 400 && err.status < 500 ? err.status : 500;
   if (status >= 400) {

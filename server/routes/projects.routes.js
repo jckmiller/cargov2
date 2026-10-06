@@ -4,10 +4,12 @@ import { authRequired, canWrite } from '../auth.js';
 import { validateProjectData } from '../../public/js/projectValidation.js';
 
 const router = Router();
+// All project endpoints require authentication; per-route checks below
+// enforce read/edit permission on the specific project.
 router.use(authRequired);
 
 /**
- * Determine whether the given user may read a project row.
+ * Determine whether the given user may read a project row:
  * - admin: everything
  * - owner: their own projects
  * - public projects: anyone
@@ -23,11 +25,20 @@ function canReadProject(user, project) {
   return Boolean(shared);
 }
 
+/**
+ * Determine whether the given user may edit a project row: admins always,
+ * otherwise editors who own the project. Viewers can never edit.
+ */
 function canEditProject(user, project) {
   if (!canWrite(user.role)) return false;
   return user.role === 'admin' || project.owner_id === user.id;
 }
 
+/**
+ * Shape a raw project row for a response: attach the project's data JSON
+ * (parsed defensively — legacy rows may hold malformed blobs) and its
+ * viewer list (id + username only, via setViewers' grants).
+ */
 function withViewers(project) {
   const viewers = db
     .prepare(
@@ -44,6 +55,11 @@ function withViewers(project) {
   return { ...project, data, viewers };
 }
 
+/**
+ * Replace the project's viewer grants wholesale: clear the old rows, then
+ * insert the new set in one transaction. Non-existent user IDs must have
+ * been rejected beforehand (see validateViewers).
+ */
 function setViewers(projectId, userIds) {
   db.prepare('DELETE FROM project_viewers WHERE project_id = ?').run(projectId);
   if (Array.isArray(userIds) && userIds.length) {
@@ -57,6 +73,11 @@ function setViewers(projectId, userIds) {
   }
 }
 
+/**
+ * Validate an optional `viewers` array: must exist as users, be positive
+ * safe integers, and stay within 1000 entries. Throws a 400-status error
+ * (caught by the central error handler) on violation.
+ */
 function validateViewers(ids) {
   if (ids === undefined) return;
   if (!Array.isArray(ids) || ids.length > 1000 || ids.some((id) =>
@@ -65,7 +86,13 @@ function validateViewers(ids) {
   }
 }
 
-// GET /api/projects  -> projects the user may read (summaries)
+/**
+ * GET /api/projects -> { projects }
+ *
+ * Lists every project the caller may read, newest first, as summaries:
+ * row metadata plus derived catalog/scenario counts and a `canEdit` flag.
+ * The full `data` blob is deliberately omitted from list responses.
+ */
 router.get('/', (req, res) => {
   const all = db.prepare(`SELECT * FROM projects p WHERE ? = 'admin' OR owner_id = ?
     OR visibility = 'public' OR EXISTS (
@@ -92,7 +119,12 @@ router.get('/', (req, res) => {
   res.json({ projects: visible });
 });
 
-// GET /api/projects/:id -> full project incl. data + viewers
+/**
+ * GET /api/projects/:id -> { project }
+ *
+ * Returns the full project including its data blob and viewer list.
+ * 404 when the id is unknown, 403 when the caller cannot read it.
+ */
 router.get('/:id', (req, res) => {
   const p = db.prepare('SELECT * FROM projects WHERE id = ?').get(Number(req.params.id));
   if (!p) return res.status(404).json({ error: 'Project not found' });
@@ -105,7 +137,13 @@ router.get('/:id', (req, res) => {
   });
 });
 
-// POST /api/projects  { name, visibility?, data?, viewers? }
+/**
+ * POST /api/projects  { name, visibility?, data?, viewers? } -> { project } (201)
+ *
+ * Creates a project owned by the caller. The data blob is run through
+ * validateProjectData (shared with the frontend) so only well-formed
+ * projects are ever persisted. Insertion and viewer grants are atomic.
+ */
 router.post('/', (req, res) => {
   if (!canWrite(req.user.role)) {
     return res.status(403).json({ error: 'Insufficient permissions' });
@@ -132,9 +170,13 @@ router.post('/', (req, res) => {
   res.status(201).json({ project: withViewers(p) });
 });
 
-// POST /api/projects/:id/duplicate  { name? }
-// Copies a project the user may read into a new project owned by the copier.
-// The duplicate always starts restricted with no viewers (safe default).
+/**
+ * POST /api/projects/:id/duplicate  { name? } -> { project } (201)
+ *
+ * Copies a project the caller may read into a new project owned by the
+ * copier. The duplicate always starts restricted with no viewers (safe
+ * default), so sharing must be re-established deliberately.
+ */
 router.post('/:id/duplicate', (req, res) => {
   if (!canWrite(req.user.role)) {
     return res.status(403).json({ error: 'Insufficient permissions' });
@@ -160,7 +202,19 @@ router.post('/:id/duplicate', (req, res) => {
   res.status(201).json({ project: withViewers(p) });
 });
 
-// PUT /api/projects/:id  { name?, visibility?, data?, viewers? }
+/**
+ * PUT /api/projects/:id  { name?, visibility?, data?, viewers?, revision } -> { project }
+ *
+ * Updates a project the caller may edit, using optimistic concurrency:
+ * the request must carry the `revision` last served to the client.
+ * - missing revision -> 428 (reload before saving)
+ * - stale revision   -> 409 (project changed elsewhere)
+ *
+ * The UPDATE itself is compare-and-set (`WHERE id = ? AND revision = ?`),
+ * and the write plus viewer grants run in one transaction so a failed
+ * revision check leaves the project untouched. Omitted fields keep their
+ * current values; content-only saves never rewrite visibility or viewers.
+ */
 router.put('/:id', (req, res) => {
   const id = Number(req.params.id);
   const p = db.prepare('SELECT * FROM projects WHERE id = ?').get(id);
@@ -196,7 +250,12 @@ router.put('/:id', (req, res) => {
   res.json({ project: withViewers(updated) });
 });
 
-// DELETE /api/projects/:id
+/**
+ * DELETE /api/projects/:id -> { ok: true }
+ *
+ * Deletes a project the caller may edit. Viewer grants cascade in the
+ * database, so no orphaned rows remain.
+ */
 router.delete('/:id', (req, res) => {
   const id = Number(req.params.id);
   const p = db.prepare('SELECT * FROM projects WHERE id = ?').get(id);
