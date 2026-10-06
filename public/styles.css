@@ -405,6 +405,8 @@ kbd {
   width: min(640px, 92vw); max-height: 88vh; overflow-y: auto;
   box-shadow: var(--shadow-lg); animation: pop 0.24s var(--ease);
 }
+/* Slim variant for simple form-only dialogs (e.g. Manage project). */
+.modal.narrow { width: min(440px, 92vw); }
 .modal-header {
   display: flex; align-items: center; justify-content: space-between; gap: var(--space-3);
   padding: var(--space-4) var(--space-5);
@@ -423,6 +425,11 @@ kbd {
 .modal h2 { margin-top: 0; }
 .modal .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
 .modal label { display: flex; flex-direction: column; gap: var(--space-1); font-size: 0.82rem; }
+/* Inline checkbox rows: label text sits beside the box, not stacked under it. */
+.modal label.check-row {
+  flex-direction: row; align-items: center; gap: var(--space-2); cursor: pointer;
+}
+.modal .check-row input[type="checkbox"] { width: auto; }
 .modal input, .modal select, .modal textarea {
   background: var(--panel-2); border: 1px solid var(--border-strong); border-radius: var(--radius);
   padding: 10px; color: var(--text); font-size: 0.9rem; width: 100%;

@@ -140,7 +140,7 @@ export async function manageProjectDialog(project, onSaved, onUpdated) {
   ]);
 
   const checks = assignable.map((u) =>
-    el('label', { class: 'row', style: 'gap:var(--space-2); cursor:pointer' }, [
+    el('label', { class: 'check-row' }, [
       el('input', { type: 'checkbox', value: String(u.id), ...(currentViewerIds.has(u.id) ? { checked: '' } : {}) }),
       el('span', { text: u.username }),
     ])
@@ -195,7 +195,7 @@ export async function manageProjectDialog(project, onSaved, onUpdated) {
         } }),
       ]),
     ]),
-    { title: `Manage "${project.name}"` }
+    { title: `Manage "${project.name}"`, narrow: true }
   );
 }
 

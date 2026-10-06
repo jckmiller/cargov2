@@ -41,7 +41,7 @@ export function toast(message, kind = '') {
 export function openModal(render, options = {}) {
   const host = document.getElementById('modal-host');
   const backdrop = el('div', { class: 'modal-backdrop' });
-  const modal = el('div', { class: 'modal', role: 'dialog', 'aria-modal': 'true' });
+  const modal = el('div', { class: `modal${options.narrow ? ' narrow' : ''}`, role: 'dialog', 'aria-modal': 'true' });
   backdrop.appendChild(modal);
   host.appendChild(backdrop);
 
