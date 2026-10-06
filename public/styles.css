@@ -407,6 +407,12 @@ kbd {
 }
 /* Slim variant for simple form-only dialogs (e.g. Manage project). */
 .modal.narrow { width: min(440px, 92vw); }
+/* Compact variant: tighter padding/gaps to cut blank space (e.g. Edit Item). */
+.modal.compact .modal-content { padding: var(--space-4); }
+.modal.compact .form-grid { gap: var(--space-2); }
+.modal.compact .modal-actions {
+  margin-top: var(--space-3); padding-top: var(--space-3);
+}
 .modal-header {
   display: flex; align-items: center; justify-content: space-between; gap: var(--space-3);
   padding: var(--space-4) var(--space-5);

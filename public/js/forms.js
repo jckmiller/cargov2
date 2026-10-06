@@ -84,7 +84,7 @@ export function itemForm(existing, onSave) {
         el('button', { class: 'btn primary', text: 'Save', onClick: submit }),
       ]),
     ]);
-  }, { title: existing ? 'Edit Item' : 'New Catalog Item' });
+  }, { title: existing ? 'Edit Item' : 'New Catalog Item', narrow: true, compact: true });
 }
 
 /**
