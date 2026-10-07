@@ -45,6 +45,7 @@ export class Interaction {
     this.sm = sceneMgr;
     // callbacks: { onSelect(id,{toggle}), onChange, onEdit, onDetails, onDelete,
     //   onToggleLabels, onTogglePending, onToggleSnap, onToggleOpenings,
+    //   onPlacePending(catalogItemId) — dbl-click a staged pending box,
     //   getContainerSpec,
     //   getSelectedId, getSelectedIds, getSnapEnabled }
     this.cb = callbacks;
@@ -485,7 +486,23 @@ export class Interaction {
     if (this.cb.isMeasuring && this.cb.isMeasuring()) return; // Measure tool owns the canvas
     this.setPointer(e);
     const group = this.pickPlacement();
-    if (group) this.cb.onDetails(group.userData.placementId);
+    if (group) { this.cb.onDetails(group.userData.placementId); return; }
+    // No placed cargo under the cursor: try the "Pending Items" staging area.
+    // Double-clicking a staged box places one unit of that catalog item into
+    // the active container (view-only sessions can't place, so it's a no-op).
+    if (!this.sm.pendingGroup.visible) return;
+    this.raycaster.setFromCamera(this.pointer, this.sm.camera);
+    const pendingHits = this.raycaster.intersectObjects(this.sm.pendingGroup.children, true);
+    for (const h of pendingHits) {
+      let o = h.object;
+      while (o && !o.userData?.pendingCatalogId) o = o.parent;
+      if (o?.userData?.pendingCatalogId) {
+        if (this.editAllowed() && this.cb.onPlacePending) {
+          this.cb.onPlacePending(o.userData.pendingCatalogId);
+        }
+        return;
+      }
+    }
   }
 
   onKey(e) {

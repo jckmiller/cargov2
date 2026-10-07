@@ -581,6 +581,9 @@ export class SceneManager {
       // regardless of that box's height.
       const group = new THREE.Group();
       group.position.set(cursorX + d.l / 2, d.h / 2, cursorZ + d.w / 2);
+      // Identify the staged unit's catalog item so double-clicking it can
+      // place a unit into the container (see Interaction.onDblClick).
+      group.userData.pendingCatalogId = item.catalogItemId || null;
       group.add(mesh, edges);
 
       const tag = makeTagSprite(item.name, item.color || '#4f8cff');

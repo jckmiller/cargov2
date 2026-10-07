@@ -277,6 +277,9 @@ function initScene() {
       else showDetails(id);
     },
     onDelete: (id) => { if (!isViewer()) removePlacement(id); },
+    // Double-click a staged "Pending Items" box: place one unit of that
+    // catalog item into the active container.
+    onPlacePending: (catId) => { if (!isViewer()) addPlacementFromCatalog(catId); },
     onToggleLabels: () => toggleLabels(),
     onTogglePending: () => togglePendingView(),
     onToggleSnap: () => toggleSnapToGrid(),
@@ -345,6 +348,7 @@ function pendingItemsList() {
     const remaining = remainingQty(it.id);
     for (let i = 0; i < remaining; i++) {
       out.push({
+        catalogItemId: it.id,
         name: it.name,
         color: itemColor(it),
         dims: { l: it.length, w: it.width, h: it.height },
