@@ -5,13 +5,29 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>A3 Shipping Pro — 3D Container Loading</title>
     <link rel="stylesheet" href="/styles.css" />
+    <!-- Vendor three.js locally so the app (including login) works offline and
+         never depends on a CDN being reachable. -->
     <script type="importmap">
       {
         "imports": {
-          "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-          "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+          "three": "/vendor/three/build/three.module.js",
+          "three/addons/": "/vendor/three/examples/jsm/"
         }
       }
+    </script>
+    <!-- Surface script/module load failures on the login screen instead of
+         silently falling back to a native form GET (the login-loop symptom). -->
+    <script>
+      window.addEventListener('error', (e) => {
+        const errEl = document.getElementById('login-error');
+        if (!errEl) return;
+        // ErrorEvent (runtime/parse errors) vs. resource load failures (e.target).
+        const msg = e.message || (e.target && e.target.src ? 'failed to load ' + e.target.src : null);
+        if (msg) {
+          errEl.textContent = 'App failed to load: ' + msg +
+            ' — check the browser console / Network tab, then reload.';
+        }
+      });
     </script>
   </head>
   <body>
