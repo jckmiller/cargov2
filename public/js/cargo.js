@@ -77,7 +77,10 @@ export function categoryColor(cat) {
 // ---------------------------------------------------------------------------
 
 /** Tan color used to render platform structures in the viewer. */
+// Platform/racking structures render tan and translucent so the cargo they
+// frame/bridge stays visible through the ghost body.
 export const PLATFORM_COLOR = '#d2b48c';
+export const PLATFORM_OPACITY = 0.35;
 
 /** True when placement `p` is a platform/racking structure. */
 export function isPlatform(p) {
