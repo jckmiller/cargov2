@@ -88,6 +88,65 @@ export function itemForm(existing, onSave) {
 }
 
 /**
+ * Platform / racking structure create form. The structure is a framing box
+ * whose legs/walls pass through cargo (no collisions) and whose TOP surface
+ * is a deck cargo can be packed on. `onSave` receives the normalized values
+ * in feet: { name, length, width, height, deckHeight, weight } where
+ * `height` is the structure height and `deckHeight` is the deck surface
+ * height above the floor (≥ height, so the legs reach the floor).
+ */
+export function platformForm(onSave) {
+  const f = {
+    name: el('input', { value: 'Platform', name: 'platform-name', autocomplete: 'off' }),
+    length: el('input', { type: 'number', step: '0.5', min: '1', name: 'platform-length', autocomplete: 'off', value: 48 }),
+    width: el('input', { type: 'number', step: '0.5', min: '1', name: 'platform-width', autocomplete: 'off', value: 48 }),
+    height: el('input', { type: 'number', step: '0.5', min: '1', name: 'platform-height', autocomplete: 'off', value: 48 }),
+    deck: el('input', { type: 'number', step: '0.5', min: '1', name: 'platform-deck', autocomplete: 'off', value: 48 }),
+    weight: el('input', { type: 'number', step: '1', min: '0', name: 'platform-weight', autocomplete: 'off', value: 0 }),
+  };
+  openModal((close) => {
+    function submit() {
+      const vals = {
+        name: f.name.value.trim() || 'Platform',
+        length: parseFloat(f.length.value) / 12,
+        width: parseFloat(f.width.value) / 12,
+        height: parseFloat(f.height.value) / 12,
+        deckHeight: parseFloat(f.deck.value) / 12,
+        weight: parseFloat(f.weight.value) || 0,
+      };
+      if (![vals.length, vals.width, vals.height, vals.deckHeight].every((n) => Number.isFinite(n) && n > 0)) {
+        toast('All dimensions must be positive numbers', 'error');
+        return;
+      }
+      if (vals.deckHeight < vals.height) {
+        toast('Deck height must be at least the structure height (legs start at the floor)', 'error');
+        return;
+      }
+      onSave(vals);
+      close();
+    }
+    return el('div', {}, [
+      el('p', {
+        class: 'muted small',
+        text: 'Framing and decking that creates extra packing surfaces above floor level. Its legs and walls pass through cargo (no collisions) — only the container walls bound it — and its top deck is legal, packable support for items placed on top.',
+      }),
+      el('div', { class: 'form-grid' }, [
+        el('label', { class: 'full-col' }, ['Name', f.name]),
+        el('label', {}, ['Length (in)', f.length]),
+        el('label', {}, ['Width (in)', f.width]),
+        el('label', {}, ['Structure height (in)', f.height]),
+        el('label', {}, ['Deck height off floor (in)', f.deck]),
+        el('label', {}, ['Weight (lb)', f.weight]),
+      ]),
+      el('div', { class: 'modal-actions' }, [
+        el('button', { class: 'btn', text: 'Cancel', onClick: close }),
+        el('button', { class: 'btn primary', text: 'Add Platform', onClick: submit }),
+      ]),
+    ]);
+  }, { title: 'Add Platform', narrow: true, compact: true });
+}
+
+/**
  * Catalog CSV import dialog. onImport(items, errors) receives parsed catalog
  * items plus per-row skip reasons. Includes a downloadable sample template.
  */

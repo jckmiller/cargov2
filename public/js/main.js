@@ -7,7 +7,7 @@ import {
 import { SceneManager } from './scene.js';
 import { Interaction } from './interaction.js';
 import { getContainer, CONTAINER_TYPES } from './container.js';
-import { makeCatalogItem, uid, itemColor, findFreePlacementAnyOrientation, layoutError, removalError, overhangFractions, DEFAULT_MAX_OVERHANG_PCT } from './cargo.js';
+import { makeCatalogItem, uid, itemColor, findFreePlacementAnyOrientation, layoutError, removalError, overhangFractions, overlapsXZ, DEFAULT_MAX_OVERHANG_PCT, PLATFORM_COLOR } from './cargo.js';
 import { createProjectSaver } from './persistence.js';
 import { validateProjectData, collectLayoutWarnings } from './projectValidation.js';
 import { startPacking } from './packingJob.js';
@@ -17,7 +17,7 @@ import {
 } from './panels.js';
 import { MeasureTool } from './measure.js';
 import { el, toast, openModal, confirmDialog, makeCollapsible } from './ui.js';
-import { itemForm, autoloadForm, loadPlanModal, manifestModal, compareModal, catalogImportForm, shortcutsModal } from './forms.js';
+import { itemForm, platformForm, autoloadForm, loadPlanModal, manifestModal, compareModal, catalogImportForm, shortcutsModal } from './forms.js';
 import { projectsDialog, newProjectDialog, usersDialog } from './dialogs.js';
 import { downloadPNG } from './reporting.js';
 import { exportProjectJSON, importProjectJSON } from './io.js';
@@ -168,7 +168,7 @@ function applyViewerRestrictions() {
   // Edit-only buttons.
   for (const id of [
     'btn-add-scenario', 'btn-autoload', 'btn-save', 'btn-import-json',
-    'btn-rotate', 'btn-tip', 'btn-delete', 'nudge-pad', 'btn-toggle-snap',
+    'btn-rotate', 'btn-tip', 'btn-delete', 'btn-add-platform', 'nudge-pad', 'btn-toggle-snap',
   ]) hide(id);
   // Switching container type is an edit; viewing the current type is not.
   const sel = document.getElementById('container-select');
@@ -440,6 +440,74 @@ function addPlacementFromCatalog(catId) {
   renderAll();
 }
 
+/**
+ * Find an XZ spot for a new platform. Platforms pass through cargo, so only
+ * existing platforms (kept visually separate) and the container walls
+ * constrain the spot: try the origin plus every edge-aligned coordinate of
+ * existing platforms, preferring the lowest, leftmost position.
+ */
+function findPlatformSpot(placements, spec, dims) {
+  const platforms = placements.filter((p) => p.kind === 'platform');
+  const fits = (x, z) =>
+    x >= 0 && x + dims.l <= spec.length + 1e-6 &&
+    z >= 0 && z + dims.w <= spec.width + 1e-6 &&
+    !platforms.some((p) => overlapsXZ({ x, z, dims }, p));
+  const xs = new Set([0]);
+  const zs = new Set([0]);
+  for (const p of platforms) {
+    xs.add(p.x);
+    xs.add(p.x + p.dims.l);
+    zs.add(p.z);
+    zs.add(p.z + p.dims.w);
+  }
+  for (const z of [...zs].sort((a, b) => a - b)) {
+    for (const x of [...xs].sort((a, b) => a - b)) {
+      if (fits(x, z)) return { x, z };
+    }
+  }
+  return null;
+}
+
+/** Add a platform / racking structure via the dedicated dialog. */
+function addPlatform() {
+  if (isViewer()) return;
+  const scn = activeScenario();
+  if (!scn) return;
+  platformForm((pf) => {
+    const spec = getContainer(scn.containerType);
+    const dims = { l: pf.length, w: pf.width, h: pf.height };
+    if (dims.l > spec.length + 1e-6 || dims.w > spec.width + 1e-6 || pf.deckHeight > spec.height + 1e-6) {
+      toast('Platform is larger than the container interior', 'error');
+      return;
+    }
+    const spot = findPlatformSpot(scn.placements, spec, dims);
+    if (!spot) {
+      toast('No wall-bounded spot left for another platform', 'warn');
+      return;
+    }
+    // Legs start at the floor; the deck surface lands at the requested height.
+    const y = Math.max(0, pf.deckHeight - dims.h);
+    const p = {
+      id: uid('pl'),
+      kind: 'platform',
+      name: pf.name,
+      category: 'general',
+      hazmatClass: 'none',
+      weight: pf.weight,
+      color: PLATFORM_COLOR,
+      x: spot.x, y, z: spot.z,
+      dims,
+      rot: { rot: 0, tipped: false },
+      layer: 0,
+    };
+    scn.placements.push(p);
+    setSelection(p.id);
+    markDirty();
+    renderAll();
+    toast(`Platform added — items can now be packed on the ${Math.round(pf.deckHeight * 12)}" deck`, 'ok');
+  });
+}
+
 function editPlacement(id) {
   if (isViewer()) return;
   const scn = activeScenario();
@@ -493,7 +561,9 @@ function removePlacement(id) {
   // the staging area either way.
   const error = removalError(scn.placements, id, spec, catalogItem, overhangAllowance(scn));
   if (error) toast(error, 'warn');
-  staging.push(scn.placements[idx]);
+  // Platforms are structures, not inventory: removing one deletes it outright
+  // instead of returning a (catalog-less) unit to the staging area.
+  if (scn.placements[idx].kind !== 'platform') staging.push(scn.placements[idx]);
   scn.placements.splice(idx, 1);
   // Drop the removed item from the (possibly multi-) selection.
   if (state.selectedPlacementIds.includes(id)) {
@@ -628,7 +698,11 @@ function scenarioHandlers() {
       if (state.project.scenarios.length >= 100) { toast('Project limit is 100 containers', 'warn'); return; }
       const s = state.project.scenarios.find((x) => x.id === id);
       const needed = new Map();
-      for (const p of s.placements) needed.set(p.catalogItemId, (needed.get(p.catalogItemId) || 0) + 1);
+      // Platforms consume no inventory; only catalog-backed units count.
+      for (const p of s.placements) {
+        if (p.kind === 'platform') continue;
+        needed.set(p.catalogItemId, (needed.get(p.catalogItemId) || 0) + 1);
+      }
       if ([...needed].some(([catId, qty]) => qty > remainingQty(catId))) {
         toast('Not enough remaining inventory to duplicate this loading', 'warn'); return;
       }
@@ -877,6 +951,7 @@ function wireToolbar() {
   syncSnapButton();
   document.getElementById('btn-toggle-openings').addEventListener('click', toggleOpenings);
   syncOpeningsButton();
+  document.getElementById('btn-add-platform').addEventListener('click', addPlatform);
   document.getElementById('btn-rotate').addEventListener('click', () => interaction.onKey({ key: 'r', target: {} }));
   document.getElementById('btn-tip').addEventListener('click', () => interaction.onKey({ key: 't', target: {} }));
   document.getElementById('btn-delete').addEventListener('click', () => {

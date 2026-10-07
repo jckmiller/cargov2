@@ -44,6 +44,18 @@ export function validateProjectData(data) {
     for (const p of scenario.placements) {
       requireValue(p && typeof p.id === 'string' && !placementIds.has(p.id), 'Placement IDs must be unique strings');
       placementIds.add(p.id);
+      // Platform/racking structures are not inventory: they reference no
+      // catalog item and are validated structurally instead.
+      const platform = p.kind === 'platform';
+      requireValue(p.kind === undefined || platform, 'Unknown placement kind');
+      if (platform) {
+        requireValue(typeof p.name === 'string' && p.name.trim() &&
+          Object.hasOwn(CATEGORIES, p.category) && Object.hasOwn(HAZMAT_CLASSES, p.hazmatClass),
+          'Invalid platform placement name/category/hazmat');
+        requireValue(p.dims && [p.dims.l, p.dims.w, p.dims.h].every((n) => Number.isFinite(n) && n > 0) &&
+          Number.isFinite(p.weight) && p.weight >= 0, 'Invalid platform dimensions or weight');
+        continue;
+      }
       requireValue(catalog.has(p.catalogItemId), 'Placement references a missing catalog item');
       requireValue(typeof p.name === 'string' && Object.hasOwn(CATEGORIES, p.category) &&
         Object.hasOwn(HAZMAT_CLASSES, p.hazmatClass), 'Invalid placement name/category/hazmat');

@@ -3,7 +3,12 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { getContainer, getOpenings, openingBounds, fmtFeet } from './container.js';
+import { PLATFORM_COLOR, PLATFORM_OPACITY } from './cargo.js';
 import { makeLabelMeshes, makeTagSprite } from './labels.js';
+
+// Cargo bodies are fully opaque so packed items stay crisp and readable
+// behind the very-translucent tan platform structures.
+const CARGO_OPACITY = 1;
 
 export class SceneManager {
   constructor(container) {
@@ -354,16 +359,20 @@ export class SceneManager {
   upsertPlacement(p, selected = false, overhang = false) {
     let group = this.placementMeshes.get(p.id);
     const d = p.dims;
+    // Platform/racking structures render tan and very translucent so the
+    // cargo they frame/bridge stays visible through the ghost body.
+    const platform = p.kind === 'platform';
     // Overhanging (but allowed) stacked items are shown red regardless of
     // their catalog/hazmat color so the marginal support is visible at a glance.
-    const bodyColor = overhang ? '#ff5c6c' : (p.color || '#4f8cff');
+    const bodyColor = platform ? PLATFORM_COLOR : (overhang ? '#ff5c6c' : (p.color || '#4f8cff'));
+    const bodyOpacity = platform ? PLATFORM_OPACITY : CARGO_OPACITY;
     if (!group) {
       group = new THREE.Group();
       const geo = new THREE.BoxGeometry(1, 1, 1);
       const mat = new THREE.MeshLambertMaterial({
         color: new THREE.Color(bodyColor),
         transparent: true,
-        opacity: 0.92,
+        opacity: bodyOpacity,
       });
       const mesh = new THREE.Mesh(geo, mat);
       mesh.name = 'body';
@@ -382,8 +391,13 @@ export class SceneManager {
     mesh.scale.set(d.l, d.h, d.w);
     edges.scale.set(d.l, d.h, d.w);
     mesh.material.color = new THREE.Color(bodyColor);
+    mesh.material.opacity = bodyOpacity;
     mesh.material.emissive = new THREE.Color(selected ? 0x333311 : 0x000000);
-    edges.material.color = new THREE.Color(selected ? 0xffc15c : 0x101827);
+    // Platforms keep a warm tan outline (brighter when selected) so the ghost
+    // structure reads clearly against any background.
+    edges.material.color = new THREE.Color(
+      platform ? (selected ? 0xffc15c : 0x9c7a4a) : (selected ? 0xffc15c : 0x101827)
+    );
     // Position by center (placement stores min-corner).
     group.position.set(p.x + d.l / 2, p.y + d.h / 2, p.z + d.w / 2);
 

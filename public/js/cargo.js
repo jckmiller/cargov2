@@ -63,6 +63,27 @@ export function categoryColor(cat) {
   return (CATEGORIES[cat] || CATEGORIES.general).color;
 }
 
+// ---------------------------------------------------------------------------
+// Platform / racking structures.
+//
+// A "platform" placement (kind === 'platform') models real-world framing and
+// decking built to create extra load-bearing surfaces above floor level
+// (e.g. a deck built over a 4x4 crate so smaller crates can rest on top of
+// it). Its base/legs and walls are STRUCTURAL ONLY: they never collide with
+// cargo (both directions — cargo may pass through the platform body, and the
+// platform may be erected overlapping existing cargo). Only the container
+// walls still bound it, and its TOP surface counts as legal, packable support
+// for any item. Rendered tan and very translucent (see scene.js).
+// ---------------------------------------------------------------------------
+
+/** Tan color used to render platform structures in the viewer. */
+export const PLATFORM_COLOR = '#d2b48c';
+
+/** True when placement `p` is a platform/racking structure. */
+export function isPlatform(p) {
+  return !!p && p.kind === 'platform';
+}
+
 export function itemColor(item) {
   if (item.hazmatClass && item.hazmatClass !== 'none') {
     const h = HAZMAT_CLASSES[item.hazmatClass];
@@ -181,11 +202,16 @@ export function overlaps3D(a, b, eps = COLLISION_EPS) {
 
 /**
  * True if `target` intersects any box in `others` (skipping itself by id).
+ * Platform structures are invisible to this check in BOTH directions: a
+ * platform's legs/walls pass through cargo, and cargo passes through the
+ * platform body — only the platform's top surface matters (as a support).
  */
 export function collidesAny(target, others, eps = COLLISION_EPS) {
+  if (isPlatform(target)) return false;
   for (const other of others) {
     if (!other || other === target) continue;
     if (target.id != null && other.id === target.id) continue;
+    if (isPlatform(other)) continue;
     if (overlaps3D(target, other, eps)) return true;
   }
   return false;
@@ -631,6 +657,9 @@ export function legalSupports(p, placements) {
  * layoutError() remains the gate the application actually uses.
  */
 export function explainPlacementError(p, placements, spec, lookup = () => null, maxOverhangPct = 0) {
+  // Platform structures are exempt from cargo rules (door, stacking support)
+  // by design; only their bounds matter and layoutError already enforces that.
+  if (isPlatform(p)) return null;
   const others = placements.filter((q) => q !== p && q.id !== p.id);
   const r = (n) => (Number.isFinite(n) ? Math.round(n * 1000) / 1000 : n);
   const d = p.dims;
@@ -765,10 +794,14 @@ export function layoutError(placements, spec, lookup = () => null, maxOverhangPc
     if (collidesAny(p, placements)) return `"${p.name}" overlaps other cargo`;
     const item = lookup(p.catalogItemId) || p;
     if (placements.some((q) => q !== p && hazmatIncompatible(p.hazmatClass, q.hazmatClass))) return 'Incompatible hazardous cargo cannot share a container';
-    if (!placementOrientations(d, { noTip: item.noTip }).some((o) => fitsOpening(o, spec))) return `"${p.name}" cannot clear the door`;
-    if (item.noTip && item.height != null && Math.abs(d.h - item.height) > COLLISION_EPS) return `"${p.name}" must stay upright`;
-    if (p.y > COLLISION_EPS) {
-      if (!isFullySupported(p, legalSupports(p, placements), maxOverhangPct)) return `"${p.name}" would be unsupported`;
+    // Platforms are erected, not loaded through the door, and are structural
+    // (framing + legs) rather than cargo: they never need their own support.
+    if (!isPlatform(p)) {
+      if (!placementOrientations(d, { noTip: item.noTip }).some((o) => fitsOpening(o, spec))) return `"${p.name}" cannot clear the door`;
+      if (item.noTip && item.height != null && Math.abs(d.h - item.height) > COLLISION_EPS) return `"${p.name}" must stay upright`;
+      if (p.y > COLLISION_EPS) {
+        if (!isFullySupported(p, legalSupports(p, placements), maxOverhangPct)) return `"${p.name}" would be unsupported`;
+      }
     }
     weight += p.weight;
   }
