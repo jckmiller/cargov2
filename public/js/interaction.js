@@ -8,7 +8,8 @@
 // settles vertically onto whatever legal support is beneath — validated
 // all-or-nothing against non-selected items. Delete and the nudge pad/arrow
 // keys act on the whole set; rotate/tip/edit/details act on the primary
-// (last-clicked) item.
+// (last-clicked) item. Double-click opens the catalog-item Edit modal (falls
+// back to the read-only Details modal for platforms and view-only Viewers).
 import * as THREE from 'three';
 import { activeScenario, catalogItem } from './store.js';
 import { collidesAny, canStack, overlapsXZ, isFullySupported, COLLISION_EPS, snapToGrid, layoutError, fitAtSpot, groupRestingDelta, DEFAULT_MAX_OVERHANG_PCT, explainPlacementError } from './cargo.js';

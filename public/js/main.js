@@ -268,7 +268,14 @@ function initScene() {
       renderClearances(selectedPlacementForClearances(), getContainer(activeScenario().containerType));
     },
     onEdit: (id) => { if (!isViewer()) editPlacement(id); },
-    onDetails: (id) => showDetails(id),
+    // Double-click: edit the underlying catalog item via the same Item Catalog
+    // edit modal (edits sync to every placed unit). Platforms (no catalog
+    // entry) and view-only Viewers fall back to the read-only Details modal.
+    onDetails: (id) => {
+      const p = activeScenario().placements.find((x) => x.id === id);
+      if (p?.catalogItemId && !isViewer()) editCatalogItem(p.catalogItemId);
+      else showDetails(id);
+    },
     onDelete: (id) => { if (!isViewer()) removePlacement(id); },
     onToggleLabels: () => toggleLabels(),
     onTogglePending: () => togglePendingView(),
@@ -727,22 +734,31 @@ function scenarioHandlers() {
   };
 }
 
+/**
+ * Open the Item Catalog Edit modal for a catalog item. Shared by the catalog
+ * panel's Edit button and double-clicking a placed item in the 3D viewer.
+ * Saving updates the catalog entry and syncs every placement (and staged
+ * entry) that denormalizes its weight/name/dimensions.
+ */
+function editCatalogItem(catId) {
+  if (isViewer()) return;
+  const item = catalogItem(catId);
+  if (!item) return;
+  itemForm(item, (out) => {
+    validateProjectData({ ...state.project, catalog: state.project.catalog.map((c) => c.id === catId ? out : c) });
+    Object.assign(item, out);
+    // Placements (and staged entries) hold denormalized copies of the
+    // item's weight/name/etc.; without this sync the stats panel would
+    // keep reporting the pre-edit values after a catalog edit.
+    syncPlacementsFromCatalog(state.project, item);
+    markDirty(); renderAll();
+  });
+}
+
 function catalogHandlers() {
   return {
     place: (catId) => addPlacementFromCatalog(catId),
-    edit: (catId) => {
-      if (isViewer()) return;
-      const item = catalogItem(catId);
-      itemForm(item, (out) => {
-        validateProjectData({ ...state.project, catalog: state.project.catalog.map((c) => c.id === catId ? out : c) });
-        Object.assign(item, out);
-        // Placements (and staged entries) hold denormalized copies of the
-        // item's weight/name/etc.; without this sync the stats panel would
-        // keep reporting the pre-edit values after a catalog edit.
-        syncPlacementsFromCatalog(state.project, item);
-        markDirty(); renderAll();
-      });
-    },
+    edit: (catId) => { if (!isViewer()) editCatalogItem(catId); },
     remove: (catId) => {
       if (isViewer()) return;
       if (placedQty(catId) > 0) { toast('Remove this item from all containers before deleting it', 'warn'); return; }
