@@ -389,10 +389,7 @@ export class SceneManager {
     const mesh = group.getObjectByName('body');
     const edges = group.getObjectByName('edges');
     mesh.scale.set(d.l, d.h, d.w);
-    // Slightly oversize the edge box (~2% outward) so item borders read a
-    // touch thicker than a hairline wireframe.
-    const EDGE_FAT = 1.02;
-    edges.scale.set(d.l * EDGE_FAT, d.h * EDGE_FAT, d.w * EDGE_FAT);
+    edges.scale.set(d.l, d.h, d.w);
     mesh.material.color = new THREE.Color(bodyColor);
     mesh.material.opacity = bodyOpacity;
     mesh.material.emissive = new THREE.Color(selected ? 0x333311 : 0x000000);
