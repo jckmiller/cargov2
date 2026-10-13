@@ -87,6 +87,40 @@ export function isPlatform(p) {
   return !!p && p.kind === 'platform';
 }
 
+/**
+ * Resize a platform along one axis by directly manipulating its far face —
+ * the in-viewer "drag the arrow" edit. `axis` is 'x' (length), 'z' (width) or
+ * 'y' (height); `value` is the world coordinate (feet) the user dragged that
+ * face to. The platform's min corner (x, y, z) stays anchored, so only the
+ * far face moves. The result is clamped to a 1-inch minimum and to the
+ * container walls — the only hard bound on a platform, since its body passes
+ * through cargo in both directions. When `snap` is true the dragged face is
+ * rounded to the 1" grid first, matching drag/nudge magnets.
+ *
+ * Pure geometry (no THREE/DOM) so it is unit-testable; interaction.js feeds
+ * it the pointer-projected axis coordinate and applies the result. Returns
+ * { dims, x, y, z } (a copy — the source placement is never mutated), or
+ * null for a non-platform or an unknown axis.
+ */
+export function resizePlatform(p, axis, value, spec, snap = false) {
+  if (!isPlatform(p) || !spec) return null;
+  const raw = Number(value);
+  if (!Number.isFinite(raw)) return null;
+  const face = snap ? snapToGrid(raw) : raw;
+  const MIN = GRID_SIZE_FT; // 1 inch — same minimum as the create form
+  const out = { dims: { ...p.dims }, x: p.x, y: p.y, z: p.z };
+  if (axis === 'x') {
+    out.dims.l = Math.min(spec.length - p.x, Math.max(MIN, face - p.x));
+  } else if (axis === 'z') {
+    out.dims.w = Math.min(spec.width - p.z, Math.max(MIN, face - p.z));
+  } else if (axis === 'y') {
+    out.dims.h = Math.min(spec.height - p.y, Math.max(MIN, face - p.y));
+  } else {
+    return null;
+  }
+  return out;
+}
+
 export function itemColor(item) {
   if (item.hazmatClass && item.hazmatClass !== 'none') {
     const h = HAZMAT_CLASSES[item.hazmatClass];

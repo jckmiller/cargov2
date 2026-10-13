@@ -10,6 +10,13 @@ import { makeLabelMeshes, makeTagSprite } from './labels.js';
 // behind the very-translucent tan platform structures.
 const CARGO_OPACITY = 1;
 
+// Platform resize arrow visuals (feet) — see buildPlatformHandles(). Fixed
+// sizes so the arrows stay grabbable regardless of the platform's size.
+const PLATFORM_SHAFT_LEN = 1.1;
+const PLATFORM_TIP_LEN = 0.45;
+const PLATFORM_SHAFT_R = 0.06;
+const PLATFORM_TIP_R = 0.17;
+
 export class SceneManager {
   constructor(container) {
     this.el = container;
@@ -107,11 +114,18 @@ export class SceneManager {
     // not decoration. Rebuilt by buildOpenings() on every setContainer().
     this.openingGroup = new THREE.Group();
     this.openingsVisible = true;
+    // In-viewer platform resize arrows (see interaction.js): three arrows on
+    // the platform's +X/+Z/+Y faces, shown only while that platform is in
+    // resize mode (double-click). Kept OUT of cargoGroup so normal cargo
+    // picking never hits them; interaction.js raycasts this group directly.
+    this.platformHandleGroup = new THREE.Group();
+    this.platformHandleGroup.visible = false;
     // Measurement markers/lines drawn by the Measure tool (see measure.js).
     this.measureGroup = new THREE.Group();
     this.scene.add(
       this.containerGroup, this.cargoGroup, this.pendingGroup,
-      this.openingGroup, this.boundaryGroup, this.measureGroup
+      this.openingGroup, this.boundaryGroup, this.measureGroup,
+      this.platformHandleGroup
     );
 
     this._raf = null;
@@ -444,6 +458,72 @@ export class SceneManager {
       this.disposeGroupContents(group);
       this.labelGroups.delete(id);
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // In-viewer platform resizing: the three axis arrows shown while a platform
+  // is in resize mode (double-click it — see interaction.js).
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Face-center anchor of each resize axis for platform `p`, plus the outward
+   * rotation that turns the default +Y arrow into the axis direction. The
+   * classic axis colors (X red, Y green, Z blue) make the mapping readable.
+   */
+  platformHandleDefs(p) {
+    const d = p.dims;
+    return [
+      { axis: 'x', color: 0xe5484d, position: [p.x + d.l, p.y + d.h / 2, p.z + d.w / 2], rotation: [0, 0, -Math.PI / 2] },
+      { axis: 'y', color: 0x30a46c, position: [p.x + d.l / 2, p.y + d.h, p.z + d.w / 2], rotation: null },
+      { axis: 'z', color: 0x3e63dd, position: [p.x + d.l / 2, p.y + d.h / 2, p.z + d.w], rotation: [Math.PI / 2, 0, 0] },
+    ];
+  }
+
+  /**
+   * Show the three axis resize arrows for platform `p`. Built once per mode
+   * entry; live drags reposition the existing arrows via
+   * updatePlatformHandles() instead of rebuilding.
+   */
+  buildPlatformHandles(p) {
+    this.disposeGroupContents(this.platformHandleGroup);
+    this.platformHandleGroup.clear();
+    for (const def of this.platformHandleDefs(p)) {
+      const mat = new THREE.MeshBasicMaterial({ color: def.color });
+      const shaft = new THREE.Mesh(
+        new THREE.CylinderGeometry(PLATFORM_SHAFT_R, PLATFORM_SHAFT_R, PLATFORM_SHAFT_LEN, 12),
+        mat
+      );
+      shaft.position.y = PLATFORM_SHAFT_LEN / 2;
+      const tip = new THREE.Mesh(
+        new THREE.ConeGeometry(PLATFORM_TIP_R, PLATFORM_TIP_LEN, 12),
+        mat
+      );
+      tip.position.y = PLATFORM_SHAFT_LEN + PLATFORM_TIP_LEN / 2;
+      const arrow = new THREE.Group();
+      arrow.add(shaft, tip);
+      if (def.rotation) arrow.rotation.set(...def.rotation);
+      arrow.position.set(...def.position);
+      arrow.userData.platformHandle = { placementId: p.id, axis: def.axis };
+      this.platformHandleGroup.add(arrow);
+    }
+    this.platformHandleGroup.visible = true;
+  }
+
+  /** Reposition the existing arrows after the platform moved or resized. */
+  updatePlatformHandles(p) {
+    if (!this.platformHandleGroup.visible) return;
+    const defs = this.platformHandleDefs(p);
+    for (const arrow of this.platformHandleGroup.children) {
+      const def = defs.find((d) => d.axis === arrow.userData.platformHandle?.axis);
+      if (def) arrow.position.set(...def.position);
+    }
+  }
+
+  /** Hide the arrows and dispose their geometry/materials. */
+  hidePlatformHandles() {
+    this.platformHandleGroup.visible = false;
+    this.disposeGroupContents(this.platformHandleGroup);
+    this.platformHandleGroup.clear();
   }
 
   /** Dispose geometry/material/texture of a label sticker group. */

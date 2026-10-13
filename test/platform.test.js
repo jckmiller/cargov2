@@ -71,3 +71,39 @@ test('platform projects validate without a catalog reference', () => {
       placements: [platform('p1', { l: 0 })] }],
   }), /Invalid platform/);
 });
+
+test('resizePlatform adjusts one face, clamped to walls and a 1" minimum', () => {
+  const p = platform('deck', { l: 4, w: 4, h: 4, deckY: 4 }); // anchored at origin
+  // Grow the length face to x=6: min corner stays, l becomes 6.
+  assert.deepEqual(cargo.resizePlatform(p, 'x', 6, spec),
+    { dims: { l: 6, w: 4, h: 4 }, x: 0, y: 0, z: 0 });
+  // Dragged past the back wall: clamped to the interior length.
+  assert.equal(cargo.resizePlatform(p, 'x', 99, spec).dims.l, spec.length);
+  // Dragged below the 1" minimum: clamped up to 1".
+  assert.equal(cargo.resizePlatform(p, 'z', 0.01, spec).dims.w, cargo.GRID_SIZE_FT);
+  // Height clamped to the roof.
+  assert.equal(cargo.resizePlatform(p, 'y', 99, spec).dims.h, spec.height);
+  // Snap rounds the dragged face to the 1" grid first.
+  assert.equal(cargo.resizePlatform(p, 'x', 5.04, spec, true).dims.l, 5);
+  // Non-platforms and unknown axes are rejected.
+  assert.equal(cargo.resizePlatform(box('b'), 'x', 6, spec), null);
+  assert.equal(cargo.resizePlatform(p, 'q', 6, spec), null);
+  // The source placement is never mutated (the result is a copy).
+  assert.deepEqual(p.dims, { l: 4, w: 4, h: 4 });
+});
+
+test('resizePlatform anchors the min corner for off-origin platforms', () => {
+  // y = deckY - h = 2, min corner (2, 2, 1).
+  const off = platform('off', { l: 2, w: 2, h: 3, deckY: 5, x: 2, z: 1 });
+  // Length face dragged to x=7 -> l = 5; x/y/z untouched.
+  assert.deepEqual(cargo.resizePlatform(off, 'x', 7, spec),
+    { dims: { l: 5, w: 2, h: 3 }, x: 2, y: 2, z: 1 });
+  // Height face dragged to y=7 (base anchored at y=2) -> h = 5.
+  assert.equal(cargo.resizePlatform(off, 'y', 7, spec).dims.h, 5);
+  // ...and clamps at the roof when dragged past it.
+  assert.equal(cargo.resizePlatform(off, 'y', 99, spec).dims.h, spec.height - 2);
+  // Width wall clamp accounts for the anchored z.
+  assert.equal(cargo.resizePlatform(off, 'z', 99, spec).dims.w, spec.width - 1);
+  // Dragging a face BACKWARD past the min corner still floors at 1".
+  assert.equal(cargo.resizePlatform(off, 'x', 0, spec).dims.l, cargo.GRID_SIZE_FT);
+});

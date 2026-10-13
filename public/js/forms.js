@@ -88,21 +88,27 @@ export function itemForm(existing, onSave) {
 }
 
 /**
- * Platform / racking structure create form. The structure is a framing box
- * whose legs/walls pass through cargo (no collisions) and whose TOP surface
- * is a deck cargo can be packed on. `onSave` receives the normalized values
- * in feet: { name, length, width, height, deckHeight, weight } where
- * `height` is the structure height and `deckHeight` is the deck surface
- * height above the floor (≥ height, so the legs reach the floor).
+ * Platform / racking structure form (create or edit). The structure is a
+ * framing box whose legs/walls pass through cargo (no collisions) and whose
+ * TOP surface is a deck cargo can be packed on. `onSave` receives the
+ * normalized values in feet: { name, length, width, height, deckHeight,
+ * weight } where `height` is the structure height and `deckHeight` is the
+ * deck surface height above the floor (≥ height, so the legs reach the
+ * floor).
+ *
+ * When `existing` is given ({ name, length, width, height, deckHeight,
+ * weight }, all in feet) the form is prefilled for editing that platform —
+ * same pattern as itemForm().
  */
-export function platformForm(onSave) {
+export function platformForm(onSave, existing = null) {
+  const inches = (ft) => Math.round(ft * 12);
   const f = {
-    name: el('input', { value: 'Platform', name: 'platform-name', autocomplete: 'off' }),
-    length: el('input', { type: 'number', step: '0.5', min: '1', name: 'platform-length', autocomplete: 'off', value: 48 }),
-    width: el('input', { type: 'number', step: '0.5', min: '1', name: 'platform-width', autocomplete: 'off', value: 48 }),
-    height: el('input', { type: 'number', step: '0.5', min: '1', name: 'platform-height', autocomplete: 'off', value: 48 }),
-    deck: el('input', { type: 'number', step: '0.5', min: '1', name: 'platform-deck', autocomplete: 'off', value: 48 }),
-    weight: el('input', { type: 'number', step: '1', min: '0', name: 'platform-weight', autocomplete: 'off', value: 0 }),
+    name: el('input', { value: existing?.name || 'Platform', name: 'platform-name', autocomplete: 'off' }),
+    length: el('input', { type: 'number', step: '0.5', min: '1', name: 'platform-length', autocomplete: 'off', value: existing ? inches(existing.length) : 48 }),
+    width: el('input', { type: 'number', step: '0.5', min: '1', name: 'platform-width', autocomplete: 'off', value: existing ? inches(existing.width) : 48 }),
+    height: el('input', { type: 'number', step: '0.5', min: '1', name: 'platform-height', autocomplete: 'off', value: existing ? inches(existing.height) : 48 }),
+    deck: el('input', { type: 'number', step: '0.5', min: '1', name: 'platform-deck', autocomplete: 'off', value: existing ? inches(existing.deckHeight) : 48 }),
+    weight: el('input', { type: 'number', step: '1', min: '0', name: 'platform-weight', autocomplete: 'off', value: existing ? Math.round(existing.weight) : 0 }),
   };
   openModal((close) => {
     function submit() {
@@ -140,10 +146,10 @@ export function platformForm(onSave) {
       ]),
       el('div', { class: 'modal-actions' }, [
         el('button', { class: 'btn', text: 'Cancel', onClick: close }),
-        el('button', { class: 'btn primary', text: 'Add Platform', onClick: submit }),
+        el('button', { class: 'btn primary', text: existing ? 'Save' : 'Add Platform', onClick: submit }),
       ]),
     ]);
-  }, { title: 'Add Platform', narrow: true, compact: true });
+  }, { title: existing ? 'Edit Platform' : 'Add Platform', narrow: true, compact: true });
 }
 
 /**
@@ -466,6 +472,7 @@ export function shortcutsModal() {
       [['Click'], 'Select an item'],
       [['Shift', 'Click'], 'Add / remove from multi-selection'],
       [['Dbl-Click'], 'Open item details'],
+      [['Dbl-Click'], 'Platform: enter resize mode — drag the axis arrows to adjust its size (Esc or click away to finish)'],
     ]],
     ['Move', [
       [['Drag'], 'Move item — settles on the floor or on legal stacks (1" grid)'],

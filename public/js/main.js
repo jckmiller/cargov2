@@ -13,7 +13,7 @@ import { validateProjectData, collectLayoutWarnings } from './projectValidation.
 import { startPacking } from './packingJob.js';
 import { presetToCatalogItem, deleteCustomPreset } from './library.js';
 import {
-  renderScenarios, renderCatalog, renderLibrary, renderStats, renderStaging, renderClearances,
+  renderScenarios, renderCatalog, renderLibrary, renderPlatforms, renderStats, renderStaging, renderClearances,
 } from './panels.js';
 import { MeasureTool } from './measure.js';
 import { enterShowcase, exitShowcase, isShowcasing } from './showcase.js';
@@ -163,7 +163,7 @@ function enterApp() {
 function applyViewerRestrictions() {
   const hide = (id) => document.getElementById(id)?.classList.add('hidden');
   // Panels the Viewer has no need for.
-  for (const name of ['catalog', 'library', 'staging']) {
+  for (const name of ['catalog', 'library', 'platforms', 'staging']) {
     document.querySelector(`.panel[data-panel="${name}"]`)?.classList.add('hidden');
   }
   // Edit-only buttons.
@@ -259,6 +259,7 @@ function initScene() {
       sm.syncPlacements(activeScenario().placements, state.selectedPlacementIds, overhangIdsFor(activeScenario()));
       updateNudgePad();
       renderClearances(selectedPlacementForClearances(), getContainer(activeScenario().containerType));
+      if (!isViewer()) renderPlatforms(activeScenario(), platformHandlers(), state.selectedPlacementIds);
     },
     onChange: () => {
       markDirty();
@@ -266,6 +267,7 @@ function initScene() {
       sm.syncPlacements(activeScenario().placements, state.selectedPlacementIds, overhangIdsFor(activeScenario()));
       renderStats(activeScenario());
       renderScenarios(state.project, state.activeScenarioId, scenarioHandlers(), isViewer());
+      if (!isViewer()) renderPlatforms(activeScenario(), platformHandlers(), state.selectedPlacementIds);
       renderClearances(selectedPlacementForClearances(), getContainer(activeScenario().containerType));
     },
     onEdit: (id) => { if (!isViewer()) editPlacement(id); },
@@ -377,11 +379,15 @@ function renderAll() {
   if (!isViewer()) {
     renderCatalog(p, catalogHandlers(), activeScenario());
     renderLibrary(libraryHandlers());
+    renderPlatforms(activeScenario(), platformHandlers(), state.selectedPlacementIds);
     renderStaging(staging, stagingHandlers());
   }
   renderStats(activeScenario());
   renderClearances(selectedPlacementForClearances(), getContainer(activeScenario().containerType));
   refreshScene();
+  // Any full refresh may have moved/resized/deleted the platform being
+  // edited in-viewer — keep its arrows glued (or exit if it's gone).
+  interaction?.refreshPlatformHandles();
   updateNudgePad();
 }
 
@@ -521,6 +527,53 @@ function addPlatform() {
   });
 }
 
+/**
+ * Edit an existing platform / racking structure via the same form used to
+ * create it (prefilled). The deck height is derived from the platform's pose
+ * (y + h = deck surface). Layout-rule problems warn but don't block, matching
+ * editPlacement's behavior. In-viewer arrow resizing (double-click) covers
+ * quick size tweaks; this dialog covers name/weight/deck semantics at once.
+ */
+function editPlatform(id) {
+  if (isViewer()) return;
+  const scn = activeScenario();
+  const p = scn?.placements.find((x) => x.id === id && x.kind === 'platform');
+  if (!p) return;
+  platformForm((pf) => {
+    const spec = getContainer(scn.containerType);
+    const dims = { l: pf.length, w: pf.width, h: pf.height };
+    if (dims.l > spec.length + 1e-6 || dims.w > spec.width + 1e-6 || pf.deckHeight > spec.height + 1e-6) {
+      toast('Platform is larger than the container interior', 'error');
+      return;
+    }
+    const candidate = {
+      ...p,
+      name: pf.name,
+      weight: pf.weight,
+      dims,
+      // Legs start at the floor; the deck surface lands at the requested height.
+      y: Math.max(0, pf.deckHeight - dims.h),
+      color: PLATFORM_COLOR,
+    };
+    // Keep the anchored corner, clamped back inside the (possibly smaller) walls.
+    candidate.x = Math.max(0, Math.min(p.x, spec.length - dims.l));
+    candidate.z = Math.max(0, Math.min(p.z, spec.width - dims.w));
+    // Layout-rule problems (e.g. stranded deck cargo) warn but no longer block.
+    const error = layoutError(scn.placements.map((q) => q === p ? candidate : q), spec, catalogItem, overhangAllowance(scn));
+    if (error) toast(error, 'warn');
+    Object.assign(p, candidate);
+    setSelection(p.id);
+    markDirty(); renderAll();
+  }, {
+    name: p.name,
+    length: p.dims.l,
+    width: p.dims.w,
+    height: p.dims.h,
+    deckHeight: p.y + p.dims.h,
+    weight: p.weight,
+  });
+}
+
 function editPlacement(id) {
   if (isViewer()) return;
   const scn = activeScenario();
@@ -575,8 +628,13 @@ function removePlacement(id) {
   const error = removalError(scn.placements, id, spec, catalogItem, overhangAllowance(scn));
   if (error) toast(error, 'warn');
   // Platforms are structures, not inventory: removing one deletes it outright
-  // instead of returning a (catalog-less) unit to the staging area.
-  if (scn.placements[idx].kind !== 'platform') staging.push(scn.placements[idx]);
+  // instead of returning a (catalog-less) unit to the staging area. Deleting
+  // a structure also leaves its in-viewer resize session, if any.
+  if (scn.placements[idx].kind !== 'platform') {
+    staging.push(scn.placements[idx]);
+  } else {
+    interaction?.exitPlatformResize();
+  }
   scn.placements.splice(idx, 1);
   // Drop the removed item from the (possibly multi-) selection.
   if (state.selectedPlacementIds.includes(id)) {
@@ -708,7 +766,7 @@ function toggleShowcase() {
 // ---------- Panel handlers ----------
 function scenarioHandlers() {
   return {
-    select: (id) => { state.activeScenarioId = id; clearSelection(); renderAll(); },
+    select: (id) => { state.activeScenarioId = id; clearSelection(); interaction?.exitPlatformResize(); renderAll(); },
     rename: (id) => {
       if (isViewer()) return;
       const s = state.project.scenarios.find((x) => x.id === id);
@@ -804,6 +862,23 @@ function libraryHandlers() {
       });
     },
     deletePreset: (i) => { if (isViewer()) return; deleteCustomPreset(i); renderLibrary(libraryHandlers()); },
+  };
+}
+
+// Platforms panel: track and act on the active container's platform structures.
+function platformHandlers() {
+  return {
+    select: (id) => {
+      setSelection(id);
+      sm.syncPlacements(activeScenario().placements, state.selectedPlacementIds, overhangIdsFor(activeScenario()));
+      renderPlatforms(activeScenario(), platformHandlers(), state.selectedPlacementIds);
+      renderClearances(selectedPlacementForClearances(), getContainer(activeScenario().containerType));
+      updateNudgePad();
+    },
+    // Jump straight into in-viewer arrow editing (same as double-clicking it).
+    resize: (id) => { interaction?.beginPlatformResize(id); },
+    edit: (id) => { if (!isViewer()) editPlatform(id); },
+    remove: (id) => { if (!isViewer()) removePlacement(id); },
   };
 }
 
@@ -1082,7 +1157,7 @@ function wireTopbar() {
   document.getElementById('btn-admin').addEventListener('click', () => usersDialog());
   document.getElementById('btn-compare').addEventListener('click', () => {
     compareModal(state.project, state.activeScenarioId, (id) => {
-      state.activeScenarioId = id; clearSelection(); renderAll();
+      state.activeScenarioId = id; clearSelection(); interaction?.exitPlatformResize(); renderAll();
     });
   });
   document.getElementById('btn-projects').addEventListener('click', () => {

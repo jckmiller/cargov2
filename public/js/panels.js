@@ -1,6 +1,6 @@
-// Render the left (scenarios/catalog/library), right (stats/staging) panels.
+// Render the left (scenarios/catalog/library/platforms), right (stats/staging) panels.
 import { el } from './ui.js';
-import { CATEGORIES, itemColor } from './cargo.js';
+import { CATEGORIES, itemColor, PLATFORM_COLOR, isPlatform } from './cargo.js';
 import { getContainer, fmtInches, fmtFeet, getOpenings } from './container.js';
 import {
   scenarioStats, placementClearances, doorFit, fmtLb, fmtPct, fmtFt3,
@@ -86,6 +86,49 @@ export function renderCatalog(project, handlers, activeScenario) {
           placeBtn,
           el('button', { class: 'btn small', text: 'Edit', onClick: () => handlers.edit(it.id) }),
           el('button', { class: 'btn small danger', text: 'Del', onClick: () => handlers.remove(it.id) }),
+        ]),
+      ])
+    );
+  }
+}
+
+/**
+ * Platforms in the active container — one row per platform/racking structure
+ * the scenario holds, mirroring how the Item Catalog tracks inventory.
+ * Clicking a row selects the platform in the viewer; Resize jumps straight
+ * into the in-viewer arrow editing (also available by double-clicking the
+ * platform itself in the viewer); Edit opens the platform form; Delete
+ * removes the structure outright.
+ */
+export function renderPlatforms(scenario, handlers, selectedIds = []) {
+  const host = document.getElementById('platform-list');
+  host.innerHTML = '';
+  const platforms = (scenario?.placements || []).filter(isPlatform);
+  if (!platforms.length) {
+    host.appendChild(el('p', {
+      class: 'muted small',
+      text: 'No platforms in this container yet — add one with the ＋ Platform button.',
+    }));
+    return;
+  }
+  for (const p of platforms) {
+    const dimsIn = `${Math.round(p.dims.l * 12)}×${Math.round(p.dims.w * 12)}×${Math.round(p.dims.h * 12)} in`;
+    const deckIn = Math.round((p.y + p.dims.h) * 12);
+    host.appendChild(
+      el('div', {
+        class: `list-item ${selectedIds.includes(p.id) ? 'active' : ''}`,
+        onClick: () => handlers.select(p.id),
+        title: 'Click to select — double-click it in the viewer (or use Resize) to adjust its size with axis arrows',
+      }, [
+        el('div', { class: 'row' }, [
+          el('span', { class: 'title', text: p.name }),
+          el('span', { class: 'chip', style: `background:${PLATFORM_COLOR}`, text: dimsIn }),
+        ]),
+        el('div', { class: 'sub', text: `Deck ${deckIn}" off floor · ${Math.round(p.weight)} lb` }),
+        el('div', { class: 'item-actions' }, [
+          el('button', { class: 'btn small primary', text: 'Resize', title: 'Adjust the size in the viewer with axis arrows', onClick: (e) => { e.stopPropagation(); handlers.resize(p.id); } }),
+          el('button', { class: 'btn small', text: 'Edit', onClick: (e) => { e.stopPropagation(); handlers.edit(p.id); } }),
+          el('button', { class: 'btn small danger', text: 'Delete', onClick: (e) => { e.stopPropagation(); handlers.remove(p.id); } }),
         ]),
       ])
     );

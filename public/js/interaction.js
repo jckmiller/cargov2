@@ -9,10 +9,11 @@
 // all-or-nothing against non-selected items. Delete and the nudge pad/arrow
 // keys act on the whole set; rotate/tip/edit/details act on the primary
 // (last-clicked) item. Double-click opens the catalog-item Edit modal (falls
-// back to the read-only Details modal for platforms and view-only Viewers).
+// back to the read-only Details modal for view-only Viewers) — except on
+// platforms, where double-click enters in-viewer resize mode (axis arrows).
 import * as THREE from 'three';
 import { activeScenario, catalogItem } from './store.js';
-import { collidesAny, canStack, overlapsXZ, isFullySupported, COLLISION_EPS, snapToGrid, layoutError, fitAtSpot, groupRestingDelta, DEFAULT_MAX_OVERHANG_PCT, explainPlacementError } from './cargo.js';
+import { collidesAny, canStack, overlapsXZ, isFullySupported, COLLISION_EPS, snapToGrid, layoutError, fitAtSpot, groupRestingDelta, DEFAULT_MAX_OVERHANG_PCT, explainPlacementError, isPlatform, resizePlatform } from './cargo.js';
 import { toast } from './ui.js';
 import { logPlacementReject } from './logs.js';
 
@@ -53,6 +54,11 @@ export class Interaction {
     this.pointer = new THREE.Vector2();
     this.dragging = null; // { placement, group, offset }
     this.dragPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+    // In-viewer platform resizing: `platformResize` is the active resize
+    // session ({ id, startError }) while `resizing` is an in-flight arrow
+    // drag ({ placement, axis, moved }). See beginPlatformResize().
+    this.platformResize = null;
+    this.resizing = null;
 
     const dom = this.sm.renderer.domElement;
     dom.addEventListener('pointerdown', (e) => this.onDown(e));
@@ -86,12 +92,157 @@ export class Interaction {
     return null;
   }
 
+  // ---------------------------------------------------------------------------
+  // In-viewer platform resizing: double-click a platform (editors) and drag
+  // the axis arrows on its +X / +Z / +Y faces to change its size. Pure math
+  // lives in cargo.js resizePlatform(); this section owns the pointer flow.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Enter resize mode for a platform: select it and show its axis arrows.
+   * Returns true when the mode was entered (platform found, edits allowed);
+   * false otherwise (callers fall back to their normal behavior).
+   */
+  beginPlatformResize(id) {
+    if (!this.editAllowed()) return false;
+    const scn = activeScenario();
+    const p = scn?.placements.find((x) => x.id === id);
+    if (!p || !isPlatform(p)) return false;
+    this.platformResize = {
+      id,
+      // Baseline layout error so the release handler can warn only about NEW
+      // problems the resize introduced (e.g. cargo stranded by a shrunken
+      // deck) — the same before/after semantics as candidateError().
+      startError: this.currentLayoutError(),
+    };
+    this.cb.onSelect(id);
+    this.sm.buildPlatformHandles(p);
+    return true;
+  }
+
+  /** Leave resize mode and hide the arrows. Safe to call at any time. */
+  exitPlatformResize() {
+    this.platformResize = null;
+    this.resizing = null;
+    this.sm.hidePlatformHandles();
+  }
+
+  /**
+   * Keep the arrows glued to the platform through edits made outside the
+   * arrow drag itself (body drag, edit dialog, autoload…). Exits resize mode
+   * when the platform no longer exists (deleted / scenario switched).
+   */
+  refreshPlatformHandles() {
+    if (!this.platformResize) return;
+    const scn = activeScenario();
+    const p = scn?.placements.find((x) => x.id === this.platformResize.id);
+    if (!p || !isPlatform(p)) {
+      this.exitPlatformResize();
+      return;
+    }
+    this.sm.updatePlatformHandles(p);
+  }
+
+  /** Current layout error (or null) — for before/after comparisons. */
+  currentLayoutError() {
+    try {
+      const scn = activeScenario();
+      const spec = this.cb.getContainerSpec();
+      if (!scn || !spec) return null;
+      return layoutError(scn.placements, spec, catalogItem, scn.maxOverhangPct ?? DEFAULT_MAX_OVERHANG_PCT);
+    } catch { return null; }
+  }
+
+  /** Raycast the platform resize arrows; returns the arrow group hit or null. */
+  pickPlatformHandle() {
+    this.raycaster.setFromCamera(this.pointer, this.sm.camera);
+    const hits = this.raycaster.intersectObjects(this.sm.platformHandleGroup.children, true);
+    for (const h of hits) {
+      let o = h.object;
+      while (o && !o.userData.platformHandle) o = o.parent;
+      if (o?.userData.platformHandle) return o;
+    }
+    return null;
+  }
+
+  /**
+   * World coordinate of the pointer projected onto the dragged axis line —
+   * the point of closest approach between the camera ray and the axis
+   * through the platform. Returns null when the view runs parallel to the
+   * axis (the drag simply holds its last value then).
+   */
+  axisPointerCoordinate(p, axis) {
+    const d = p.dims;
+    const origin = new THREE.Vector3(
+      axis === 'x' ? p.x : p.x + d.l / 2,
+      axis === 'y' ? p.y : p.y + d.h / 2,
+      axis === 'z' ? p.z : p.z + d.w / 2
+    );
+    const dir = new THREE.Vector3(axis === 'x' ? 1 : 0, axis === 'y' ? 1 : 0, axis === 'z' ? 1 : 0);
+    const ray = this.raycaster.ray;
+    // Closest point between the camera ray (u) and the axis line (v):
+    //   v-parameter s = (u·v * u·w0 − v·w0) / (1 − (u·v)²),  w0 = origin − ray.origin
+    const w0 = origin.clone().sub(ray.origin);
+    const b = ray.direction.dot(dir);
+    const d0 = ray.direction.dot(w0);
+    const e = dir.dot(w0);
+    const denom = 1 - b * b;
+    if (Math.abs(denom) < 1e-9) return null; // looking straight along the axis
+    const s = (b * d0 - e) / denom;
+    return axis === 'x' ? origin.x + s : axis === 'y' ? origin.y + s : origin.z + s;
+  }
+
+  /** Pointer moved while dragging a resize arrow: resize the platform live. */
+  resizeMove() {
+    const r = this.resizing;
+    if (!activeScenario()?.placements.includes(r.placement)) {
+      this.exitPlatformResize();
+      return;
+    }
+    const value = this.axisPointerCoordinate(r.placement, r.axis);
+    if (value == null) return;
+    const out = resizePlatform(r.placement, r.axis, value, this.cb.getContainerSpec(), this.snapEnabled());
+    if (!out) return;
+    if (out.dims.l === r.placement.dims.l && out.dims.w === r.placement.dims.w &&
+        out.dims.h === r.placement.dims.h) return; // clamped to the same size
+    r.placement.dims = out.dims;
+    r.moved = true;
+    this.sm.upsertPlacement(r.placement, true);
+    this.sm.updatePlatformHandles(r.placement);
+  }
+
   onDown(e) {
     if (this.cb.isMeasuring && this.cb.isMeasuring()) return; // Measure tool owns the canvas
     if (this.cb.isShowcasing && this.cb.isShowcasing()) return; // Showcase owns the canvas
     if (e.button !== 0 || e.ctrlKey || e.metaKey) return; // plain left = drag; Ctrl/Cmd+left = orbit
     this.setPointer(e);
+    // Platform resize arrows own the canvas while a platform is in resize mode.
+    if (this.platformResize) {
+      const handle = this.pickPlatformHandle();
+      if (handle) {
+        const scn = activeScenario();
+        const p = scn?.placements.find((x) => x.id === this.platformResize.id);
+        if (!p || !isPlatform(p)) {
+          this.exitPlatformResize();
+          return;
+        }
+        this.dragging = null;
+        this.sm.renderer.domElement.setPointerCapture(e.pointerId);
+        this.resizing = { placement: p, axis: handle.userData.platformHandle.axis, moved: false };
+        return;
+      }
+    }
     const group = this.pickPlacement();
+    // Not an arrow: clicking other cargo or empty space ends resize mode. The
+    // platform's own body keeps it, so an accidental click doesn't lose the
+    // editing session (a body drag moves the platform; the arrows follow).
+    if (this.platformResize && (!group || group.userData.placementId !== this.platformResize.id)) {
+      this.exitPlatformResize();
+      if (!group) {
+        if (!e.shiftKey) this.cb.onSelect(null);
+        return;
+      }
+    }
     if (!group) {
       // Empty space: Shift-click keeps the current set (avoids accidental
       // clears while building a selection); a plain click clears it.
@@ -197,6 +348,13 @@ export class Interaction {
   }
 
   onMove(e) {
+    if (this.resizing) {
+      // Resize arrow drag: project the pointer onto the axis and resize live.
+      this.setPointer(e);
+      this.raycaster.setFromCamera(this.pointer, this.sm.camera);
+      this.resizeMove();
+      return;
+    }
     if (!this.dragging) return;
     this.setPointer(e);
     this.raycaster.setFromCamera(this.pointer, this.sm.camera);
@@ -208,6 +366,9 @@ export class Interaction {
     } else {
       this.moveSingle(hit);
     }
+    // If the platform being resized was dragged by its body, keep its arrows
+    // glued to the new pose.
+    this.refreshPlatformHandles();
   }
 
   /** True when the caller has snap-to-grid enabled (defaults on if unset). */
@@ -413,6 +574,20 @@ export class Interaction {
   }
 
   onUp() {
+    if (this.resizing) {
+      // Resize arrow release: commit the new dimensions via the normal
+      // change pipeline, and warn about NEW layout problems only (e.g. cargo
+      // stranded when a deck shrank underneath it) — same before/after
+      // semantics as candidateError.
+      const r = this.resizing;
+      this.resizing = null;
+      if (r.moved) {
+        this.cb.onChange();
+        const err = this.currentLayoutError();
+        if (err && err !== this.platformResize?.startError) toast(err, 'warn');
+      }
+      return;
+    }
     if (this.dragging) {
       if (this.dragging.moved) {
         // A Shift+drag that actually stacked a single item selects it (matching
@@ -488,7 +663,16 @@ export class Interaction {
     if (this.cb.isShowcasing && this.cb.isShowcasing()) return; // Showcase owns the canvas
     this.setPointer(e);
     const group = this.pickPlacement();
-    if (group) { this.cb.onDetails(group.userData.placementId); return; }
+    if (group) {
+      // Double-click a platform (editors only): enter in-viewer resize mode
+      // with axis arrows instead of opening a modal. Viewers — and any
+      // non-platform placement — keep the normal Details/Edit flow.
+      const scn = activeScenario();
+      const p = scn?.placements.find((x) => x.id === group.userData.placementId);
+      if (p && isPlatform(p) && this.beginPlatformResize(p.id)) return;
+      this.cb.onDetails(group.userData.placementId);
+      return;
+    }
     // No placed cargo under the cursor: try the "Pending Items" staging area.
     // Double-clicking a staged box places one unit of that catalog item into
     // the active container (view-only sessions can't place, so it's a no-op).
@@ -517,6 +701,12 @@ export class Interaction {
     const id = this.cb.getSelectedId();
     const p = scenario?.placements.find((x) => x.id === id);
     const key = e.key.toLowerCase();
+
+    // Esc leaves platform resize mode (arrows hidden; committed sizes stay).
+    if (key === 'escape' && this.platformResize) {
+      this.exitPlatformResize();
+      return;
+    }
 
     // ---- Fine-tune move: nudge the selected item along the viewer's axes ----
     // Arrow keys move on the ground plane relative to the current camera view;
@@ -774,6 +964,7 @@ export class Interaction {
       this.sm.upsertPlacement(p, true);
     }
     this.cb.onChange();
+    this.refreshPlatformHandles(); // arrows follow a nudged platform
     if (rule) toast(rule, 'warn');
   }
 
@@ -813,6 +1004,7 @@ export class Interaction {
     p.z = candidate.z;
     this.sm.upsertPlacement(p, true);
     this.cb.onChange();
+    this.refreshPlatformHandles(); // arrows follow a rotated/tipped platform
     if (error) toast(error, 'warn');
   }
 }
