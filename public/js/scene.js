@@ -2,7 +2,7 @@
 // and cargo mesh management. Scene units = feet.
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { getContainer, getOpenings, openingBounds, fmtFeet } from './container.js';
+import { getContainer, getOpenings, openingBounds } from './container.js';
 import { PLATFORM_COLOR, PLATFORM_OPACITY } from './cargo.js';
 import { makeLabelMeshes, makeTagSprite } from './labels.js';
 
@@ -96,8 +96,8 @@ export class SceneManager {
     this.boundaryGroup = new THREE.Group();
     this.boundaryGroup.visible = false;
     // Door/jamb opening overlay: the jamb mask (what's BLOCKED), the clear
-    // opening outline + dimension label, and the entry envelope (the volume
-    // reachable through the opening). Visible by default — it's a constraint,
+    // opening outline, and the entry envelope (the volume reachable through
+    // the opening). Visible by default — it's a constraint,
     // not decoration. Rebuilt by buildOpenings() on every setContainer().
     this.openingGroup = new THREE.Group();
     this.openingsVisible = true;
@@ -199,8 +199,7 @@ export class SceneManager {
    *     BLOCKED: the header band across the top plus the two side-jamb
    *     slivers. Drawing the obstruction (rather than just outlining the hole)
    *     is what makes the lost headroom read as a physical lintel.
-   *  2. CLEAR OPENING — a bright outline of the usable hole, with a floating
-   *     dimension label ("End doors — 7' 8" W x 7' 5" H clear").
+   *  2. CLEAR OPENING — a bright outline of the usable hole.
    *  3. ENTRY ENVELOPE — a very faint volume swept from the opening straight
    *     through the container. Cargo sitting outside this volume could never
    *     have been carried in through the door.
@@ -255,7 +254,7 @@ export class SceneManager {
       addRect(0, b.spanLo, b.yLo, b.yHi, maskMat);
       addRect(b.spanHi, faceSpan, b.yLo, b.yHi, maskMat);
 
-      // --- 2. Clear opening outline + dimension label. ---
+      // --- 2. Clear opening outline. ---
       const outlineGeo = new THREE.BufferGeometry();
       const corners = endFace
         ? [
@@ -276,17 +275,6 @@ export class SceneManager {
         new THREE.LineBasicMaterial({ color: 0xffa726 })
       ));
 
-      const label = makeTagSprite(
-        `${opening.label} — ${fmtFeet(b.width)} W × ${fmtFeet(b.height)} H clear`,
-        '#ffa726'
-      );
-      // Float the label just outside the opening, centered on it.
-      const labelOut = b.plane - 1.2 * b.inward;
-      const sMid = (b.spanLo + b.spanHi) / 2;
-      if (endFace) label.position.set(labelOut, b.yHi + 0.9, sMid);
-      else label.position.set(sMid, b.yHi + 0.9, labelOut);
-      this.openingGroup.add(label);
-
       // --- 3. Entry envelope: the opening swept through the container. ---
       const depth = endFace ? L : W;
       const envGeo = new THREE.BoxGeometry(
@@ -303,6 +291,7 @@ export class SceneManager {
       }));
       const envMid = b.plane + (depth / 2) * b.inward;
       const yMid = (b.yLo + b.yHi) / 2;
+      const sMid = (b.spanLo + b.spanHi) / 2;
       if (endFace) env.position.set(envMid, yMid, sMid);
       else env.position.set(sMid, yMid, envMid);
       env.name = 'entry-envelope';

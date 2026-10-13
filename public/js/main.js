@@ -641,7 +641,7 @@ function syncPendingButton() {
 }
 
 /**
- * Toggle the door/jamb overlay: the clear opening outline + dimensions, the
+ * Toggle the door/jamb overlay: the clear opening outline, the
  * translucent jamb/header mask showing what's BLOCKED, and the faint entry
  * envelope swept from the opening through the container. Persisted like the
  * theme and snap-to-grid preferences.
