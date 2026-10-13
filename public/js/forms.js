@@ -485,6 +485,7 @@ export function shortcutsModal() {
       [['P'], 'Toggle Pending Items (staged beside container)'],
       [['G'], 'Toggle 1" snap-to-grid'],
       [['D'], 'Toggle door/jamb openings'],
+      [['V'], 'Showcase mode — full-screen revolving presentation of the active container (Esc exits)'],
       [['Ctrl/Cmd', 'Drag'], 'Orbit camera'],
       [['Shift', 'Ctrl/Cmd', 'Drag'], 'Pan view / move the pivot'],
       [['Scroll'], 'Zoom'],

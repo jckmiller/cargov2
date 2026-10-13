@@ -88,6 +88,7 @@ export class Interaction {
 
   onDown(e) {
     if (this.cb.isMeasuring && this.cb.isMeasuring()) return; // Measure tool owns the canvas
+    if (this.cb.isShowcasing && this.cb.isShowcasing()) return; // Showcase owns the canvas
     if (e.button !== 0 || e.ctrlKey || e.metaKey) return; // plain left = drag; Ctrl/Cmd+left = orbit
     this.setPointer(e);
     const group = this.pickPlacement();
@@ -484,6 +485,7 @@ export class Interaction {
 
   onDblClick(e) {
     if (this.cb.isMeasuring && this.cb.isMeasuring()) return; // Measure tool owns the canvas
+    if (this.cb.isShowcasing && this.cb.isShowcasing()) return; // Showcase owns the canvas
     this.setPointer(e);
     const group = this.pickPlacement();
     if (group) { this.cb.onDetails(group.userData.placementId); return; }
@@ -510,6 +512,7 @@ export class Interaction {
     if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) || e.target?.isContentEditable ||
         document.querySelector('.modal-backdrop')) return;
     if (this.cb.isMeasuring && this.cb.isMeasuring()) return; // Measure tool owns keyboard shortcuts
+    if (this.cb.isShowcasing && this.cb.isShowcasing()) return; // Showcase owns keyboard shortcuts (Esc/V exit it)
     const scenario = activeScenario();
     const id = this.cb.getSelectedId();
     const p = scenario?.placements.find((x) => x.id === id);

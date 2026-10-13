@@ -77,6 +77,13 @@ the database is empty and `ADMIN_PASSWORD` is not provided.
 - **Snap-to-grid (`G`):** drags and nudges snap to a 1" grid by default so items align precisely; toggle on/off from the toolbar or the `G` key (persisted).
 - Rotate 90° (`R`, swaps L/W) or tip forward (`T`, swaps L/H).
 - 3D item tags/labels (`L`), dark/light theme toggle.
+- **Showcase mode (`V`):** a chrome-free, full-screen, slowly revolving
+  turntable presentation of the active container and its cargo, with a caption
+  card (project, container, item count, total weight). Manual drag-orbit/zoom
+  stay live — dragging pauses the auto-rotation and it resumes after release.
+  Read-only by construction, so it is available to every signed-in role
+  (admin, editor, viewer); `Esc` or the on-screen button exits and restores
+  the exact prior viewpoint.
 
 ### Cargo & projects
 - **Projects** bundle an **item catalog** (all potential packages + quantity
@@ -180,7 +187,7 @@ the database is empty and `ADMIN_PASSWORD` is not provided.
 
 ## Keyboard shortcuts
 `Click` select · `Drag` move (settles on floor or legal stack) · `Shift+Click` multi-select · `R` rotate ·
-`T` tip · `E` edit · `L` toggle tags · `Dbl-Click` details · `Delete` remove ·
+`T` tip · `E` edit · `L` toggle tags · `V` showcase mode · `Dbl-Click` details · `Delete` remove ·
 `Ctrl/Cmd+Left-Drag` camera · `Scroll` zoom.
 
 ## Validation, tests and upgrade notes

@@ -16,6 +16,7 @@ import {
   renderScenarios, renderCatalog, renderLibrary, renderStats, renderStaging, renderClearances,
 } from './panels.js';
 import { MeasureTool } from './measure.js';
+import { enterShowcase, exitShowcase, isShowcasing } from './showcase.js';
 import { el, toast, openModal, confirmDialog, makeCollapsible } from './ui.js';
 import { itemForm, platformForm, autoloadForm, loadPlanModal, manifestModal, compareModal, catalogImportForm, shortcutsModal } from './forms.js';
 import { projectsDialog, newProjectDialog, usersDialog } from './dialogs.js';
@@ -290,6 +291,7 @@ function initScene() {
     getSnapEnabled: () => state.snapToGridEnabled,
     canEdit: () => !isViewer(),
     isMeasuring: () => measure && measure.isActive(),
+    isShowcasing: () => isShowcasing(),
   });
 
   measure = new MeasureTool(sm);
@@ -688,6 +690,21 @@ function syncMeasureButton(active) {
   btn.setAttribute('aria-pressed', String(active));
 }
 
+/**
+ * Toggle Showcase mode: a chrome-free, full-screen, slowly revolving turntable
+ * presentation of the active container and its cargo. It reads the scene only,
+ * so — unlike every editing surface — it is deliberately NOT gated by
+ * isViewer(): admins, editors and view-only Viewers all get it.
+ */
+function toggleShowcase() {
+  if (isShowcasing()) { exitShowcase(); return; }
+  const scn = activeScenario();
+  if (!sm || !scn) { toast('No container to showcase yet', 'warn'); return; }
+  // The Measure tool also owns the canvas — leave it before presenting.
+  if (measure && measure.isActive()) toggleMeasureTool();
+  enterShowcase(sm, state.project, scn);
+}
+
 // ---------- Panel handlers ----------
 function scenarioHandlers() {
   return {
@@ -1035,9 +1052,24 @@ function wireToolbar() {
   document.getElementById('btn-shortcuts').addEventListener('click', () => shortcutsModal());
   window.addEventListener('keydown', (e) => {
     if (e.key !== '?') return;
+    if (isShowcasing()) return; // no modals on top of the presentation
     const tag = (e.target && e.target.tagName) || '';
     if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) || e.target.isContentEditable) return;
     shortcutsModal();
+  });
+
+  // Showcase mode: full-screen revolving presentation, available to every role.
+  document.getElementById('btn-showcase').addEventListener('click', () => toggleShowcase());
+  window.addEventListener('keydown', (e) => {
+    if (e.key.toLowerCase() !== 'v') return;
+    // Skip while typing, while a modal is open, or combined with a browser
+    // shortcut modifier (Ctrl/Cmd/Alt+V must keep their normal meaning).
+    const tag = (e.target && e.target.tagName) || '';
+    if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) || e.target.isContentEditable) return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (document.querySelector('.modal-backdrop')) return;
+    e.preventDefault();
+    toggleShowcase();
   });
 }
 

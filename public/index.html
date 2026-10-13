@@ -120,6 +120,7 @@
             <button id="btn-toggle-pending" class="btn small" aria-pressed="false" title="Show remaining items staged beside the container (P)">Pending Items (P)</button>
             <button id="btn-toggle-snap" class="btn small" aria-pressed="true" title="Snap dragged/nudged items to a 1&quot; grid (G)">Snap Grid (G)</button>
             <button id="btn-toggle-openings" class="btn small" aria-pressed="true" title="Show door/jamb openings: the clear opening, the blocked jamb/header area, and the entry envelope reachable through it (D)">Door Jambs (D)</button>
+            <button id="btn-showcase" class="btn small" aria-pressed="false" title="Showcase mode — full-screen revolving presentation of this container and its cargo (V). Available to every role.">🎬 Showcase (V)</button>
             <button id="btn-add-platform" class="btn small" title="Add a platform / racking structure — framing and decking whose legs and walls pass through cargo, with a packable top deck">＋ Platform</button>
             <button id="btn-rotate" class="btn small" title="Rotate 90° (R)">Rotate</button>
             <button id="btn-tip" class="btn small" title="Tip forward (T)">Tip</button>
@@ -186,6 +187,9 @@
         </aside>
       </div>
     </div>
+
+    <!-- Showcase mode HUD host (caption, stats, exit button) -->
+    <div id="showcase-ui" class="hidden"></div>
 
     <!-- Modal host -->
     <div id="modal-host"></div>

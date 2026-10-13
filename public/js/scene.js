@@ -59,6 +59,12 @@ export class SceneManager {
     //   Ctrl/Cmd only        -> assign PAN    -> library flips to ROTATE (orbit)
     //   Ctrl/Cmd + Shift     -> assign ROTATE -> library flips to PAN (move pivot)
     this._onPointerDownCapture = (e) => {
+      // Showcase mode: plain left-drag orbits — a presenter shouldn't need
+      // modifier gymnastics. Takes priority over the modifier logic below.
+      if (this._showcaseControls) {
+        this.controls.mouseButtons.LEFT = THREE.MOUSE.ROTATE;
+        return;
+      }
       const hasCtrlOrMeta = e.button === 0 && (e.ctrlKey || e.metaKey);
       const panModifier = hasCtrlOrMeta && e.shiftKey; // Shift+Ctrl/Cmd: move pivot
       const orbitModifier = hasCtrlOrMeta && !e.shiftKey; // Ctrl/Cmd only: orbit
@@ -303,6 +309,24 @@ export class SceneManager {
   setOpeningsVisible(v) {
     this.openingsVisible = v;
     this.openingGroup.visible = v;
+  }
+
+  /**
+   * While Showcase mode is active (see showcase.js), plain left-drag orbits the
+   * camera instead of dragging cargo. The pointerdown capture handler above
+   * normally reassigns mouseButtons.LEFT on the fly from the modifier keys;
+   * the showcase flag takes priority over that. The prior LEFT assignment is
+   * saved and restored on exit so normal editing resumes untouched.
+   */
+  setShowcaseControls(active) {
+    this._showcaseControls = !!active;
+    if (this._showcaseControls) {
+      this._savedMouseButtons = { ...this.controls.mouseButtons };
+      this.controls.mouseButtons.LEFT = THREE.MOUSE.ROTATE;
+    } else if (this._savedMouseButtons) {
+      this.controls.mouseButtons.LEFT = this._savedMouseButtons.LEFT;
+      this._savedMouseButtons = null;
+    }
   }
 
   /**

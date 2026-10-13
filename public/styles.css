@@ -515,3 +515,37 @@ kbd {
 
 /* Printouts (Manifest & Load Plan) open in a dedicated window and carry their
    own self-contained stylesheet, so no app-level @media print rules are needed. */
+
+/* ---------- Showcase mode (full-screen revolving presentation) ---------- */
+/* Chrome-free presentation: the 3D viewport is pinned over the whole app while
+   #app carries .showcase-mode (see showcase.js). Only the canvas, its HUD and
+   the exit control remain interactive. */
+#app.showcase-mode .topbar,
+#app.showcase-mode .sidebar,
+#app.showcase-mode .scene-toolbar,
+#app.showcase-mode .sidebar-handle { display: none !important; }
+#app.showcase-mode .scene-wrap { position: fixed; inset: 0; z-index: 60; }
+
+/* HUD floats above the pinned viewport; only its cards/buttons catch clicks. */
+#showcase-ui { position: fixed; inset: 0; z-index: 70; pointer-events: none; }
+#showcase-ui .showcase-hud {
+  position: absolute; top: var(--space-4); left: var(--space-4);
+  pointer-events: auto; max-width: 320px;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); box-shadow: var(--shadow-lg);
+  padding: var(--space-4) var(--space-5);
+}
+.showcase-hud h2 { margin: 0; font-size: 1.15rem; letter-spacing: -0.01em; }
+.showcase-hud p { margin: 2px 0 var(--space-3); font-size: 0.85rem; }
+.showcase-stats { display: flex; gap: var(--space-5); }
+.showcase-stats div { display: flex; flex-direction: column; gap: 2px; }
+.showcase-stats strong { font-size: 1.05rem; }
+
+#showcase-ui .showcase-controls {
+  /* Top-right: the bottom-right corner belongs to the toast stack. */
+  position: absolute; top: var(--space-4); right: var(--space-4);
+  display: flex; align-items: center; gap: var(--space-3);
+  pointer-events: auto;
+}
+.showcase-hint { color: var(--muted); }
+
